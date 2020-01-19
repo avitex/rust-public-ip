@@ -1,0 +1,206 @@
+use std::borrow::Cow;
+use std::convert::TryFrom;
+use std::future::Future;
+use std::net::IpAddr;
+use std::str;
+
+use futures::future::{self, FutureExt, TryFutureExt};
+use futures::stream::{self, BoxStream};
+use http::uri::{InvalidUri as InvalidUriError, Uri};
+use hyper::{
+    body::{self, Body, Buf},
+    client::{Builder, Client, HttpConnector},
+    rt::Executor,
+};
+use once_cell::sync::{Lazy, OnceCell};
+use regex::Regex;
+
+use crate::{
+    util, AutoResolverContext, Resolution, Resolver, ResolverContext, ResultResolver, ToResolver,
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
+pub const HTTP_IPIFY_ORG_RESOLVER: HttpResolverOptions =
+    HttpResolverOptions::new_static("http://api.ipify.org", ExtractMethod::PlainText);
+
+pub const HTTP_WHATISMYIPADDRESS_COM_RESOLVER: HttpResolverOptions =
+    HttpResolverOptions::new_static(
+        "http://bot.whatismyipaddress.com/",
+        ExtractMethod::PlainText,
+    );
+
+///////////////////////////////////////////////////////////////////////////////
+
+pub type HttpClient = Client<HttpConnector, Body>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum ExtractMethod {
+    PlainText,
+    StripDoubleQuotes,
+    ExtractJsonIpField,
+}
+
+#[derive(Debug)]
+pub enum HttpResolutionError {
+    Uri(InvalidUriError),
+    Client(hyper::Error),
+    EmptyIpAddr,
+    InvalidIpAddr,
+    InvalidUtf8,
+}
+
+#[derive(Clone, Debug)]
+pub struct HttpResolverOptions<'a> {
+    uri: Cow<'a, str>,
+    method: ExtractMethod,
+}
+
+impl<'a> HttpResolverOptions<'a> {
+    pub fn new<U>(uri: U, method: ExtractMethod) -> Self
+    where
+        U: Into<Cow<'a, str>>,
+    {
+        Self {
+            uri: uri.into(),
+            method,
+        }
+    }
+}
+
+impl HttpResolverOptions<'static> {
+    pub const fn new_static(uri: &'static str, method: ExtractMethod) -> Self {
+        Self {
+            uri: Cow::Borrowed(uri),
+            method,
+        }
+    }
+}
+
+impl<'a, C> ToResolver<C> for HttpResolverOptions<'a>
+where
+    C: HttpResolverContext,
+{
+    type Resolver = ResultResolver<HttpResolver, HttpResolutionError>;
+
+    fn to_resolver(&self) -> Self::Resolver {
+        let result = Uri::try_from(self.uri.as_ref())
+            .map_err(HttpResolutionError::Uri)
+            .map(|uri| HttpResolver {
+                uri,
+                method: self.method,
+            });
+        ResultResolver::new(result)
+    }
+}
+
+pub struct HttpResolution {
+    address: IpAddr,
+    uri: Uri,
+    method: ExtractMethod,
+}
+
+impl HttpResolution {
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
+
+    pub fn extract_method(&self) -> ExtractMethod {
+        self.method
+    }
+}
+
+impl Resolution for HttpResolution {
+    fn address(&self) -> IpAddr {
+        self.address
+    }
+}
+
+pub struct HttpResolver {
+    uri: Uri,
+    method: ExtractMethod,
+}
+
+impl<C> Resolver<C> for HttpResolver
+where
+    C: HttpResolverContext,
+{
+    type Error = HttpResolutionError;
+    type Resolution = HttpResolution;
+    type Stream = BoxStream<'static, Result<Self::Resolution, Self::Error>>;
+
+    fn resolve(&mut self, cx: C) -> Self::Stream {
+        // Get client and tokio runtime
+        let client = cx.client();
+        let runtime = cx.runtime();
+        let uri = self.uri.clone();
+        let method = self.method;
+        // Init JSON IP field regex
+        static JSON_IP_FIELD_REGEX: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r#"(?i)"ip"\s*:\s*"(.+?)""#).expect("invalid regex"));
+
+        let req_fut = client
+            .get(uri.clone())
+            .and_then(|res| body::aggregate(res.into_body()))
+            .map_err(HttpResolutionError::Client)
+            .map_ok(move |body| {
+                let body_str =
+                    str::from_utf8(body.bytes()).map_err(|_| HttpResolutionError::InvalidUtf8)?;
+                let address_str_opt = match method {
+                    ExtractMethod::PlainText => Some(body_str),
+                    ExtractMethod::ExtractJsonIpField => (*JSON_IP_FIELD_REGEX)
+                        .captures(body_str)
+                        .and_then(|caps| caps.get(1))
+                        .map(|cap| cap.as_str()),
+                    ExtractMethod::StripDoubleQuotes => Some(body_str.trim_matches('"')),
+                };
+                address_str_opt
+                    .ok_or(HttpResolutionError::EmptyIpAddr)
+                    .and_then(|s| s.parse().map_err(|_| HttpResolutionError::InvalidIpAddr))
+                    .map(|address| HttpResolution {
+                        address,
+                        uri,
+                        method,
+                    })
+            })
+            .and_then(future::ready);
+
+        let fut = runtime
+            .spawn(req_fut)
+            .map(|res| res.expect("failed to execute request future"));
+
+        Box::pin(stream::once(fut))
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// HttpContext
+
+static DEFAULT_HTTP_CLIENT: OnceCell<HttpClient> = OnceCell::new();
+
+pub trait HttpResolverContext: ResolverContext {
+    fn client(&self) -> &'static HttpClient {
+        let executor = TokioExecutor(self.runtime());
+        DEFAULT_HTTP_CLIENT.get_or_init(|| Builder::default().executor(executor).build_http())
+    }
+
+    fn runtime(&self) -> &'static util::TokioRuntime {
+        util::tokio_runtime()
+    }
+}
+
+impl<T> HttpResolverContext for T where T: AutoResolverContext {}
+
+///////////////////////////////////////////////////////////////////////////////
+// Hyper executor wrapper
+
+struct TokioExecutor<'a>(&'a util::TokioRuntime);
+
+impl<'a, F> Executor<F> for TokioExecutor<'a>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    fn execute(&self, fut: F) {
+        self.0.spawn(fut);
+    }
+}

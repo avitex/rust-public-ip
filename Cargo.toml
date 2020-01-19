@@ -1,0 +1,24 @@
+[package]
+name = "public-ip"
+version = "0.1.0"
+authors = ["avitex <theavitex@gmail.com>"]
+edition = "2018"
+
+[features]
+default = ["dns-resolver", "http-resolver"]
+dns-resolver = ["tokio", "trust-dns-client", "trust-dns-proto", "once_cell"]
+http-resolver = ["tokio", "http", "hyper", "regex", "once_cell"]
+
+[dependencies]
+futures = "0.3"
+
+trust-dns-client = { version = "0.18", optional = true }
+trust-dns-proto = { version = "0.18", optional = true }
+once_cell = { version = "~1", optional = true }
+hyper = { version = "0.13", optional = true }
+http = { version = "0.2", optional = true }
+regex = { version = "~1", optional = true }
+tokio = { version = "0.2", features = ["rt-threaded"], optional = true }
+
+[dev-dependencies]
+async-std = "~1"
