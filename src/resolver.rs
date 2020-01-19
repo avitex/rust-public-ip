@@ -14,20 +14,6 @@ pub trait Resolver<C: ResolverContext>: Send {
     fn resolve(&mut self, cx: C) -> Self::Stream;
 }
 
-impl<'a, T, C> Resolver<C> for &'a mut T
-where
-    T: Resolver<C>,
-    C: ResolverContext,
-{
-    type Error = T::Error;
-    type Resolution = T::Resolution;
-    type Stream = T::Stream;
-
-    fn resolve(&mut self, cx: C) -> Self::Stream {
-        (&mut **self).resolve(cx)
-    }
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 pub trait ResolverContext: Send {}
@@ -241,6 +227,8 @@ where
         ResolverList::new(resolvers)
     }
 }
+
+///////////////////////////////////////////////////////////////////////////////
 
 pub struct ResolverList<R, C>
 where
