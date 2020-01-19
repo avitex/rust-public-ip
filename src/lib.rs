@@ -1,3 +1,53 @@
+//! Crate providing a generic way to find the public IP address of the
+//! device it runs on, along with with some built in resolvers
+//! 
+//! # Basic Usage
+//! 
+//! ```rust
+//! use async_std::task;
+//! use public_ip::{self, dns, http, ToResolver, BoxToResolver};
+//! 
+//! fn main() {
+//!     // List of resolvers to try and get an IP address from
+//!     let resolver = vec![
+//!         BoxToResolver::new(dns::OPENDNS_RESOLVER),
+//!         BoxToResolver::new(http::HTTP_IPIFY_ORG_RESOLVER),
+//!     ].to_resolver();
+//!     // Attempt to get an IP address and print it
+//!     if let Some(ip) = task::block_on(public_ip::resolve_address(resolver)) {
+//!         println!("public ip address: {:?}", ip);
+//!     } else {
+//!         println!("couldn't get an IP address");
+//!     }
+//! }
+//! ```
+//! 
+//! # Usage with Resolution
+//! 
+//! ```rust
+//! use std::any::Any;
+//! 
+//! use async_std::task;
+//! use public_ip::{self, dns, ToResolver, Resolution};
+//!  
+//! fn main() {
+//!     // List of resolvers to try and get an IP address from
+//!     let resolver = dns::OPENDNS_RESOLVER.to_resolver();
+//!     // Attempt to get an IP address and print it
+//!     if let Some(resolution) = task::block_on(public_ip::resolve(resolver)) {
+//!         if let Some(resolution) = Any::downcast_ref::<dns::DnsResolution>(&resolution) {
+//!             println!("public ip address {:?} resolved from {:?} ({:?})",
+//!                 resolution.address(),
+//!                 resolution.name(),
+//!                 resolution.server(),
+//!             );
+//!         }
+//!     } else {
+//!         println!("couldn't get an IP address");
+//!     }
+//! }
+//! ```
+
 mod resolver;
 
 #[cfg(any(feature = "http-resolver", feature = "dns-resolver"))]

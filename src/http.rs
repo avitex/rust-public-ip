@@ -32,8 +32,10 @@ pub const HTTP_WHATISMYIPADDRESS_COM_RESOLVER: HttpResolverOptions =
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/// Internal HTTP client used by a HTTP resolver
 pub type HttpClient = Client<HttpConnector, Body>;
 
+/// Method used to extract an IP address from a http response
 #[derive(Debug, Clone, Copy)]
 pub enum ExtractMethod {
     PlainText,
@@ -41,6 +43,7 @@ pub enum ExtractMethod {
     ExtractJsonIpField,
 }
 
+/// An error produced from a HTTP resolver
 #[derive(Debug)]
 pub enum HttpResolutionError {
     Uri(InvalidUriError),
@@ -50,6 +53,7 @@ pub enum HttpResolutionError {
     InvalidUtf8,
 }
 
+/// Options to build a HTTP resolver
 #[derive(Clone, Debug)]
 pub struct HttpResolverOptions<'a> {
     uri: Cow<'a, str>,
@@ -57,6 +61,7 @@ pub struct HttpResolverOptions<'a> {
 }
 
 impl<'a> HttpResolverOptions<'a> {
+    /// Create new HTTP resolver options
     pub fn new<U>(uri: U, method: ExtractMethod) -> Self
     where
         U: Into<Cow<'a, str>>,
@@ -69,6 +74,7 @@ impl<'a> HttpResolverOptions<'a> {
 }
 
 impl HttpResolverOptions<'static> {
+    /// Create new HTTP resolver options from static
     pub const fn new_static(uri: &'static str, method: ExtractMethod) -> Self {
         Self {
             uri: Cow::Borrowed(uri),
@@ -91,6 +97,7 @@ where
     }
 }
 
+/// A resolution produced from a HTTP resolver
 pub struct HttpResolution {
     address: IpAddr,
     uri: Uri,
@@ -98,10 +105,13 @@ pub struct HttpResolution {
 }
 
 impl HttpResolution {
+    /// URI used in the resolution of the associated IP address
     pub fn uri(&self) -> &Uri {
         &self.uri
     }
 
+    /// The extract method used in the resolution of the 
+    /// associated IP address
     pub fn extract_method(&self) -> ExtractMethod {
         self.method
     }
@@ -119,6 +129,7 @@ pub struct HttpResolver {
 }
 
 impl HttpResolver {
+    /// Create new HTTP resolver
     pub fn new(uri: Uri, method: ExtractMethod) -> Self {
         Self {
             uri,
