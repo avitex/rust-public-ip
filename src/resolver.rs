@@ -214,6 +214,20 @@ where
 
 ///////////////////////////////////////////////////////////////////////////////
 
+impl<'a, T, C> ToResolver<C> for &'a [T]
+where
+    T: ToResolver<C>,
+    T::Resolver: 'static,
+    C: ResolverContext + Clone + 'static,
+{
+    type Resolver = ResolverList<T::Resolver, C>;
+
+    fn to_resolver(&self) -> Self::Resolver {
+        let resolvers = self.iter().map(|r| r.to_resolver()).collect();
+        ResolverList::new(resolvers)
+    }
+}
+
 impl<T, C> ToResolver<C> for Vec<T>
 where
     T: ToResolver<C>,
