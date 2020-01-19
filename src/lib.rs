@@ -1,12 +1,12 @@
 //! Crate providing a generic way to find the public IP address of the
 //! device it runs on, along with with some built in resolvers
-//! 
+//!
 //! # Basic Usage
-//! 
+//!
 //! ```rust
 //! use async_std::task;
 //! use public_ip::{self, dns, http, ToResolver, BoxToResolver};
-//! 
+//!
 //! fn main() {
 //!     // List of resolvers to try and get an IP address from
 //!     let resolver = vec![
@@ -21,12 +21,12 @@
 //!     }
 //! }
 //! ```
-//! 
+//!
 //! # Usage with Resolution
-//! 
+//!
 //! ```rust
 //! use std::any::Any;
-//! 
+//!
 //! use async_std::task;
 //! use public_ip::{self, dns, ToResolver, Resolution};
 //!  
@@ -76,8 +76,8 @@ pub type BoxResolutionStream = BoxStream<'static, Result<BoxResolution, BoxResol
 
 ///////////////////////////////////////////////////////////////////////////////
 
-/// The success product of a resolver
-/// 
+/// The successful product of a resolver
+///
 /// As well as containing the IP address resolved,
 /// resolvers will contain the specific parameters
 /// used in the resolution in their concrete type.

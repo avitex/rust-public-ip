@@ -6,20 +6,31 @@ use futures::stream::{self, BoxStream, Stream, StreamExt, TryStreamExt};
 
 use crate::{BoxResolution, BoxResolutionError, BoxResolutionStream, Resolution, ResolutionError};
 
+/// Trait implemented by IP address resolvers
 pub trait Resolver<C: ResolverContext>: Send {
+    /// Error produced while attempting to resolve
     type Error: ResolutionError;
+    /// A successfully produced resolution
     type Resolution: Resolution;
+    /// The resolution stream produced by the resolver
     type Stream: Stream<Item = Result<Self::Resolution, Self::Error>> + Send + 'static;
 
+    /// Resolves a stream of IP addresses given a context
+    ///
+    /// Note, can only be called once per resolver
     fn resolve(&mut self, cx: C) -> Self::Stream;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/// Base context used by resolvers for specifying resolver environment
 pub trait ResolverContext: Send {}
 
+/// Trait when implemented provides a default context for
+/// all builtin resolvers
 pub trait AutoResolverContext: ResolverContext {}
 
+/// Default resolver context (see `AutoResolverContext`)
 #[derive(Clone)]
 pub struct DefaultResolverContext;
 
@@ -37,6 +48,7 @@ type BoxResolverInner<C> = Box<
     >,
 >;
 
+/// Boxed `Resolver` wrapper
 pub struct BoxResolver<C> {
     inner: BoxResolverInner<C>,
 }
@@ -155,6 +167,7 @@ where
 
 type BoxToResolverInner<C> = Box<dyn ToResolver<C, Resolver = BoxResolver<C>>>;
 
+/// Boxed `BoxToResolver` wrapper
 pub struct BoxToResolver<C> {
     inner: BoxToResolverInner<C>,
 }

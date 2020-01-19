@@ -21,14 +21,13 @@ use crate::{
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/// `http://api.ipify.org` HTTP resolver options
 pub const HTTP_IPIFY_ORG_RESOLVER: HttpResolverOptions =
     HttpResolverOptions::new_static("http://api.ipify.org", ExtractMethod::PlainText);
 
+/// `http://bot.whatismyipaddress.com` HTTP resolver options
 pub const HTTP_WHATISMYIPADDRESS_COM_RESOLVER: HttpResolverOptions =
-    HttpResolverOptions::new_static(
-        "http://bot.whatismyipaddress.com/",
-        ExtractMethod::PlainText,
-    );
+    HttpResolverOptions::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -98,6 +97,7 @@ where
 }
 
 /// A resolution produced from a HTTP resolver
+#[derive(Clone, Debug)]
 pub struct HttpResolution {
     address: IpAddr,
     uri: Uri,
@@ -110,7 +110,7 @@ impl HttpResolution {
         &self.uri
     }
 
-    /// The extract method used in the resolution of the 
+    /// The extract method used in the resolution of the
     /// associated IP address
     pub fn extract_method(&self) -> ExtractMethod {
         self.method
@@ -131,10 +131,7 @@ pub struct HttpResolver {
 impl HttpResolver {
     /// Create new HTTP resolver
     pub fn new(uri: Uri, method: ExtractMethod) -> Self {
-        Self {
-            uri,
-            method,
-        }
+        Self { uri, method }
     }
 }
 

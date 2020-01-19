@@ -190,6 +190,7 @@ where
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct DnsResolution {
     address: IpAddr,
     server: IpAddr,
