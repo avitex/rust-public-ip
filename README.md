@@ -2,7 +2,7 @@
 [![Crate](https://img.shields.io/crates/v/public-ip.svg)](https://crates.io/crates/public-ip)
 [![Docs](https://docs.rs/public-ip/badge.svg)](https://docs.rs/public-ip)
 
-# rust-xlff
+# rust-public-ip
 
 **Find the public IP address of a device**  
 Documentation hosted on [docs.rs](https://docs.rs/public-ip).
