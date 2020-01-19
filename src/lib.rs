@@ -5,7 +5,7 @@
 //!
 //! ```rust
 //! use async_std::task;
-//! use public_ip::{self, dns, http, ToResolver, BoxToResolver};
+//! use public_ip::{dns, http, ToResolver, BoxToResolver};
 //!
 //! fn main() {
 //!     // List of resolvers to try and get an IP address from
@@ -28,7 +28,7 @@
 //! use std::any::Any;
 //!
 //! use async_std::task;
-//! use public_ip::{self, dns, ToResolver, Resolution};
+//! use public_ip::{dns, ToResolver, Resolution};
 //!  
 //! fn main() {
 //!     // List of resolvers to try and get an IP address from
