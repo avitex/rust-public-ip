@@ -104,6 +104,8 @@ where
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/// A resolver that wraps a result that is either a resolver, or an error
+/// produced while creating it
 pub struct ResultResolver<R, E> {
     inner: Option<Result<R, E>>,
 }
@@ -142,6 +144,8 @@ where
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/// Trait implemented for types that can be converted into a resolver given
+/// a resolver context
 pub trait ToResolver<C>
 where
     C: ResolverContext,
@@ -219,11 +223,11 @@ where
     T::Resolver: 'static,
     C: ResolverContext + Clone + 'static,
 {
-    type Resolver = ResolverList<T::Resolver, C>;
+    type Resolver = ListResolver<T::Resolver, C>;
 
     fn to_resolver(&self) -> Self::Resolver {
         let resolvers = self.iter().map(|r| r.to_resolver()).collect();
-        ResolverList::new(resolvers)
+        ListResolver::new(resolvers)
     }
 }
 
@@ -233,17 +237,20 @@ where
     T::Resolver: 'static,
     C: ResolverContext + Clone + 'static,
 {
-    type Resolver = ResolverList<T::Resolver, C>;
+    type Resolver = ListResolver<T::Resolver, C>;
 
     fn to_resolver(&self) -> Self::Resolver {
         let resolvers = self.iter().map(|r| r.to_resolver()).collect();
-        ResolverList::new(resolvers)
+        ListResolver::new(resolvers)
     }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-pub struct ResolverList<R, C>
+/// A resolver for combining a list of resolvers into one
+/// 
+/// Note, prefer using `ToResolver::to_resolver`
+pub struct ListResolver<R, C>
 where
     R: Resolver<C> + 'static,
     C: ResolverContext + Clone + 'static,
@@ -252,7 +259,7 @@ where
     context: PhantomData<C>,
 }
 
-impl<R, C> ResolverList<R, C>
+impl<R, C> ListResolver<R, C>
 where
     R: Resolver<C> + 'static,
     C: ResolverContext + Clone + 'static,
@@ -265,7 +272,7 @@ where
     }
 }
 
-impl<R, C> Resolver<C> for ResolverList<R, C>
+impl<R, C> Resolver<C> for ListResolver<R, C>
 where
     R: Resolver<C> + 'static,
     C: ResolverContext + Clone + 'static,

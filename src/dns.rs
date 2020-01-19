@@ -20,6 +20,8 @@ use crate::{
     util, AutoResolverContext, Resolution, Resolver, ResolverContext, ResultResolver, ToResolver,
 };
 
+const DNS_SOCKET_PORT: u16 = 53;
+
 ///////////////////////////////////////////////////////////////////////////////
 // Hardcoded DNS resolvers
 
@@ -90,7 +92,7 @@ async fn query_dns_server(
     host: IpAddr,
     query: DnsQuery,
 ) -> Result<DnsResponse, DnsProtoError> {
-    let addr = SocketAddr::new(host, 53);
+    let addr = SocketAddr::new(host, DNS_SOCKET_PORT);
     let stream = UdpClientStream::<UdpSocket>::new(addr);
     let (mut client, bg) = AsyncDnsClient::connect(stream).await?;
     rt.spawn(bg);
@@ -128,6 +130,7 @@ fn parse_dns_response(
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/// An error produced from a DNS resolver
 #[derive(Debug)]
 pub enum DnsResolutionError {
     Proto(DnsProtoError),
@@ -137,6 +140,7 @@ pub enum DnsResolutionError {
     EmptyIpAddr,
 }
 
+/// Method used to query an IP address from a DNS server
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum QueryMethod {
     A,
@@ -144,6 +148,7 @@ pub enum QueryMethod {
     TXT,
 }
 
+/// Options to build a DNS resolver
 pub struct DnsResolverOptions<'a> {
     name: Cow<'a, str>,
     servers: Cow<'a, [IpAddr]>,
@@ -151,6 +156,7 @@ pub struct DnsResolverOptions<'a> {
 }
 
 impl<'a> DnsResolverOptions<'a> {
+    /// Create new DNS resolver options
     pub fn new<N, S>(name: N, servers: S, method: QueryMethod) -> Self
     where
         N: Into<Cow<'a, str>>,
@@ -165,6 +171,7 @@ impl<'a> DnsResolverOptions<'a> {
 }
 
 impl DnsResolverOptions<'static> {
+    /// Create new DNS resolver options from static
     pub const fn new_static(
         name: &'static str,
         servers: &'static [IpAddr],
@@ -190,6 +197,7 @@ where
     }
 }
 
+/// A resolution produced from a DNS resolver
 #[derive(Clone, Debug)]
 pub struct DnsResolution {
     address: IpAddr,
@@ -199,14 +207,17 @@ pub struct DnsResolution {
 }
 
 impl DnsResolution {
+    /// DNS name used in the resolution of the associated IP address
     pub fn name(&self) -> &DnsName {
         &self.name
     }
 
+    /// DNS server used in the resolution of the associated IP address
     pub fn server(&self) -> IpAddr {
         self.server
     }
 
+    /// The query method used in the resolution of the associated IP address
     pub fn query_method(&self) -> QueryMethod {
         self.method
     }
@@ -218,6 +229,7 @@ impl Resolution for DnsResolution {
     }
 }
 
+/// The DNS resolver
 #[derive(Clone, Debug)]
 pub struct DnsResolver {
     query: DnsQuery,
@@ -226,6 +238,7 @@ pub struct DnsResolver {
 }
 
 impl DnsResolver {
+    /// Create new DNS resolver
     pub fn new<N, I>(name: N, servers: I, method: QueryMethod) -> Result<Self, DnsResolutionError>
     where
         N: Into<Cow<'static, str>>,
@@ -286,6 +299,7 @@ where
     }
 }
 
+/// Context used in a DNS resolver
 pub trait DnsResolverContext: ResolverContext {
     fn runtime<'a>(&self) -> &'a util::TokioRuntime {
         util::tokio_runtime()

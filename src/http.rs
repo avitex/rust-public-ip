@@ -110,8 +110,7 @@ impl HttpResolution {
         &self.uri
     }
 
-    /// The extract method used in the resolution of the
-    /// associated IP address
+    /// The extract method used in the resolution of the associated IP address
     pub fn extract_method(&self) -> ExtractMethod {
         self.method
     }
@@ -123,6 +122,7 @@ impl Resolution for HttpResolution {
     }
 }
 
+/// The HTTP resolver
 pub struct HttpResolver {
     uri: Uri,
     method: ExtractMethod,
@@ -192,6 +192,7 @@ where
 
 static DEFAULT_HTTP_CLIENT: OnceCell<HttpClient> = OnceCell::new();
 
+/// Context used in a HTTP resolver
 pub trait HttpResolverContext: ResolverContext {
     fn client<'a>(&self) -> &'a HttpClient {
         let executor = TokioExecutor(self.runtime());
