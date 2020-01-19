@@ -86,10 +86,7 @@ where
     fn to_resolver(&self) -> Self::Resolver {
         let result = Uri::try_from(self.uri.as_ref())
             .map_err(HttpResolutionError::Uri)
-            .map(|uri| HttpResolver {
-                uri,
-                method: self.method,
-            });
+            .map(|uri| HttpResolver::new(uri, self.method));
         ResultResolver::new(result)
     }
 }
@@ -119,6 +116,15 @@ impl Resolution for HttpResolution {
 pub struct HttpResolver {
     uri: Uri,
     method: ExtractMethod,
+}
+
+impl HttpResolver {
+    pub fn new(uri: Uri, method: ExtractMethod) -> Self {
+        Self {
+            uri,
+            method,
+        }
+    }
 }
 
 impl<C> Resolver<C> for HttpResolver
