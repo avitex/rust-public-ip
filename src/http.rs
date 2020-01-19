@@ -179,12 +179,12 @@ where
 static DEFAULT_HTTP_CLIENT: OnceCell<HttpClient> = OnceCell::new();
 
 pub trait HttpResolverContext: ResolverContext {
-    fn client(&self) -> &'static HttpClient {
+    fn client<'a>(&self) -> &'a HttpClient {
         let executor = TokioExecutor(self.runtime());
         DEFAULT_HTTP_CLIENT.get_or_init(|| Builder::default().executor(executor).build_http())
     }
 
-    fn runtime(&self) -> &'static util::TokioRuntime {
+    fn runtime<'a>(&self) -> &'a util::TokioRuntime {
         util::tokio_runtime()
     }
 }

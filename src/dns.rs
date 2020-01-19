@@ -23,8 +23,10 @@ use crate::{
 ///////////////////////////////////////////////////////////////////////////////
 // Hardcoded DNS resolvers
 
+/// Combined OpenDNS IPv4 and IPv6 options
 pub const OPENDNS_RESOLVER: &[DnsResolverOptions] = &[OPENDNS_RESOLVER_V4, OPENDNS_RESOLVER_V6];
 
+/// OpenDNS IPv4 DNS resolver options
 pub const OPENDNS_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::new_static(
     "myip.opendns.com",
     &[
@@ -36,6 +38,7 @@ pub const OPENDNS_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::new_stat
     QueryMethod::A,
 );
 
+/// OpenDNS IPv6 DNS resolver options
 pub const OPENDNS_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::new_static(
     "myip.opendns.com",
     &[
@@ -47,9 +50,11 @@ pub const OPENDNS_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::new_stat
     QueryMethod::AAAA,
 );
 
+/// Combined Google DNS IPv4 and IPv6 options
 pub const GOOGLE_DNS_TXT_RESOLVER: &[DnsResolverOptions] =
     &[GOOGLE_DNS_TXT_RESOLVER_V4, GOOGLE_DNS_TXT_RESOLVER_V6];
 
+/// Google DNS IPv4 DNS resolver options
 pub const GOOGLE_DNS_TXT_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::new_static(
     "o-o.myaddr.l.google.com",
     &[
@@ -61,6 +66,7 @@ pub const GOOGLE_DNS_TXT_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::n
     QueryMethod::TXT,
 );
 
+/// Google DNS IPv6 DNS resolver options
 pub const GOOGLE_DNS_TXT_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::new_static(
     "o-o.myaddr.l.google.com",
     &[
@@ -279,11 +285,8 @@ where
     }
 }
 
-// Currently we have to create a tokio runtime for the trust dns client.
-// TODO: Once trust dns natively supports async-std, we will remove this
-// runtime init, or at least make it configurable.
 pub trait DnsResolverContext: ResolverContext {
-    fn runtime(&self) -> &'static util::TokioRuntime {
+    fn runtime<'a>(&self) -> &'a util::TokioRuntime {
         util::tokio_runtime()
     }
 }
