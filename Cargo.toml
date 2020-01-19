@@ -3,6 +3,14 @@ name = "public-ip"
 version = "0.1.0"
 authors = ["avitex <theavitex@gmail.com>"]
 edition = "2018"
+description = "Find the public IP address of a device"
+documentation = "https://docs.rs/public-ip"
+homepage = "https://github.com/avitex/rust-public-ip"
+repository = "https://github.com/avitex/rust-public-ip"
+license = "MIT"
+
+[badges]
+travis-ci = { repository = "avitex/rust-public-ip", branch = "master" }
 
 [features]
 default = ["dns-resolver", "http-resolver"]
