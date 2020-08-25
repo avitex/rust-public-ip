@@ -1,7 +1,7 @@
 [package]
 name = "public-ip"
-version = "0.1.0"
-authors = ["avitex <theavitex@gmail.com>"]
+version = "0.1.1"
+authors = ["avitex <avitex@wfxlabs.com>"]
 edition = "2018"
 description = "Find the public IP address of a device"
 documentation = "https://docs.rs/public-ip"
@@ -20,8 +20,8 @@ http-resolver = ["tokio", "http", "hyper", "regex", "once_cell"]
 [dependencies]
 futures = "0.3"
 
-trust-dns-client = { version = "0.18", optional = true }
-trust-dns-proto = { version = "0.18", optional = true }
+trust-dns-client = { version = "0.19", optional = true }
+trust-dns-proto = { version = "0.19", optional = true }
 once_cell = { version = "~1", optional = true }
 hyper = { version = "0.13", optional = true }
 http = { version = "0.2", optional = true }
