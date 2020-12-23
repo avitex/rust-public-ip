@@ -23,7 +23,7 @@ futures = "0.3"
 trust-dns-client = { version = "0.19", optional = true }
 trust-dns-proto = { version = "0.19", optional = true }
 once_cell = { version = "~1", optional = true }
-hyper = { version = "0.13", optional = true }
+hyper = { version = "0.14", optional = true }
 http = { version = "0.2", optional = true }
 regex = { version = "~1", optional = true }
 tokio = { version = "0.2", features = ["rt-threaded"], optional = true }
