@@ -97,6 +97,7 @@ async fn query_dns_server(
     let (mut client, bg) = AsyncDnsClient::connect(stream).await?;
     rt.spawn(bg);
     let query_opts = DnsRequestOptions {
+        use_edns: true,
         expects_multiple_responses: false,
     };
     client.lookup(query, query_opts).await
@@ -110,7 +111,7 @@ fn parse_dns_response(
         Some(answer) => answer,
         None => return Err(DnsResolutionError::EmptyIpAddr),
     };
-    match answer.unwrap_rdata() {
+    match answer.into_data() {
         DnsRData::A(addr) if method == QueryMethod::A => Ok(IpAddr::V4(addr)),
         DnsRData::AAAA(addr) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr)),
         DnsRData::TXT(txt) if method == QueryMethod::TXT => match txt.iter().next() {

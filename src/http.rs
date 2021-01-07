@@ -157,9 +157,10 @@ where
             .get(uri.clone())
             .and_then(|res| body::aggregate(res.into_body()))
             .map_err(HttpResolutionError::Client)
-            .map_ok(move |body| {
+            .map_ok(move |mut body| {
+                let body = body.copy_to_bytes(body.remaining());
                 let body_str =
-                    str::from_utf8(body.bytes()).map_err(|_| HttpResolutionError::InvalidUtf8)?;
+                    str::from_utf8(body.as_ref()).map_err(|_| HttpResolutionError::InvalidUtf8)?;
                 let address_str_opt = match method {
                     ExtractMethod::PlainText => Some(body_str),
                     ExtractMethod::ExtractJsonIpField => (*JSON_IP_FIELD_REGEX)

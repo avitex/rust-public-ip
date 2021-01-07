@@ -6,11 +6,9 @@ pub use tokio::runtime::Runtime as TokioRuntime;
 pub fn tokio_runtime() -> &'static TokioRuntime {
     static RT: OnceCell<TokioRuntime> = OnceCell::new();
     RT.get_or_init(|| {
-        tokio::runtime::Builder::new()
-            .threaded_scheduler()
+        tokio::runtime::Builder::new_multi_thread()
             .enable_time()
             .enable_io()
-            .core_threads(1)
             .build()
             .expect("failed to start tokio runtime")
     })
