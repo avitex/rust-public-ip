@@ -1,14 +1,55 @@
+//! Crate for resolving a devices' own public IP address.
+//!
+//! ```
+//! #[tokio::main]
+//! async fn main() {
+//!     // Attempt to get an IP address and print it.
+//!     if let Some(ip) = public_ip::addr().await {
+//!         println!("public ip address: {:?}", ip);
+//!     } else {
+//!         println!("couldn't get an IP address");
+//!     }
+//! }
+//! ```
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![forbid(
+    trivial_casts,
+    trivial_numeric_casts,
+    unstable_features,
+    future_incompatible
+)]
+#![deny(
+    unused,
+    rustdoc,
+    missing_docs,
+    rust_2018_idioms,
+    clippy::all,
+    clippy::correctness,
+    clippy::style,
+    clippy::complexity,
+    clippy::perf,
+    clippy::pedantic,
+    clippy::cargo
+)]
+#![allow(clippy::doc_markdown, clippy::needless_pass_by_value)]
+
 mod error;
 
 #[cfg(any(
     all(feature = "dns-resolver", not(feature = "tokio-dns-resolver")),
     all(feature = "http-resolver", not(feature = "tokio-http-resolver"))
 ))]
-compile_error!("tokio is the only supported runtime currently - consider creating a PR or issue");
+compile_error!("tokio is not enabled and is the only supported runtime currently - consider creating a PR or issue");
 
+/// DNS resolver support.
 #[cfg(feature = "dns-resolver")]
+#[cfg_attr(docsrs, doc(cfg(feature = "dns-resolver")))]
 pub mod dns;
+
+/// HTTP resolver support.
 #[cfg(feature = "http-resolver")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http-resolver")))]
 pub mod http;
 
 use std::any::Any;
@@ -24,11 +65,21 @@ use pin_project_lite::pin_project;
 
 pub use crate::error::Error;
 
+/// The details of a resolution.
+///
+/// The internal details can be downcasted through [`Any`].
 pub type Details = Box<dyn Any + Send + Sync + 'static>;
+
+/// A [`Stream`] of `Result<(IpAddr, Details), Error>`.
 pub type Resolutions<'a> = BoxStream<'a, Result<(IpAddr, Details), Error>>;
 
 /// All builtin resolvers.
-pub const ALL: &dyn crate::Resolver = &&[
+#[cfg(any(feature = "dns-resolver", feature = "http-resolver"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(feature = "dns-resolver", feature = "http-resolver")))
+)]
+pub const ALL: &dyn crate::Resolver<'static> = &&[
     #[cfg(feature = "dns-resolver")]
     dns::ALL,
     #[cfg(feature = "http-resolver")]
@@ -39,12 +90,17 @@ pub const ALL: &dyn crate::Resolver = &&[
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Version {
+    /// IPv4.
     V4,
+    /// IPv6.
     V6,
+    /// Any version of IP address.
     Any,
 }
 
 impl Version {
+    /// Returns `true` if the provided IP address's version matches `self`.
+    #[must_use]
     pub fn matches(self, addr: IpAddr) -> bool {
         self == Version::Any
             || (self == Version::V4 && addr.is_ipv4())
@@ -58,6 +114,11 @@ impl Version {
 ///
 /// This function will attempt to resolve until the stream is empty and will
 /// drop/ignore any resolver errors.
+#[cfg(any(feature = "dns-resolver", feature = "http-resolver"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(feature = "dns-resolver", feature = "http-resolver")))
+)]
 pub async fn addr() -> Option<IpAddr> {
     addr_with(ALL, Version::Any).await
 }
@@ -67,6 +128,11 @@ pub async fn addr() -> Option<IpAddr> {
 ///
 /// This function will attempt to resolve until the stream is empty and will
 /// drop/ignore any resolver errors.
+#[cfg(any(feature = "dns-resolver", feature = "http-resolver"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(feature = "dns-resolver", feature = "http-resolver")))
+)]
 pub async fn addr_v4() -> Option<Ipv4Addr> {
     addr_with(ALL, Version::V4).await.map(|addr| match addr {
         IpAddr::V4(addr) => addr,
@@ -79,6 +145,11 @@ pub async fn addr_v4() -> Option<Ipv4Addr> {
 ///
 /// This function will attempt to resolve until the stream is empty and will
 /// drop/ignore any resolver errors.
+#[cfg(any(feature = "dns-resolver", feature = "http-resolver"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(feature = "dns-resolver", feature = "http-resolver")))
+)]
 pub async fn addr_v6() -> Option<Ipv6Addr> {
     addr_with(ALL, Version::V6).await.map(|addr| match addr {
         IpAddr::V6(addr) => addr,
@@ -169,32 +240,24 @@ where
             ) -> Poll<Option<Self::Item>> {
                 match ready!(self.as_mut().project().stream.poll_next(cx)) {
                     Some(o) => Poll::Ready(Some(o)),
-                    None => {
-                        if let Some(next) = self.resolvers.next() {
-                            self.stream = next.resolve(self.version);
-                            self.project().stream.poll_next(cx)
-                        } else {
-                            Poll::Ready(None)
-                        }
-                    }
+                    None => self.resolvers.next().map_or(Poll::Ready(None), |next| {
+                        self.stream = next.resolve(self.version);
+                        self.project().stream.poll_next(cx)
+                    }),
                 }
             }
         }
 
         let mut resolvers = self.iter();
-
-        let stream = match resolvers.next() {
-            Some(first) => first.resolve(version),
-            None => Box::pin(stream::empty()),
-        };
-
-        let resolver = DynSliceResolver {
+        let first_resolver = resolvers.next();
+        Box::pin(DynSliceResolver {
             version,
             resolvers,
-            stream,
-        };
-
-        Box::pin(resolver)
+            stream: match first_resolver {
+                Some(first) => first.resolve(version),
+                None => Box::pin(stream::empty()),
+            },
+        })
     }
 }
 

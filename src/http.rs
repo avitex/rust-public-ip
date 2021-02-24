@@ -29,7 +29,7 @@ use crate::{Resolutions, Version};
 // Hardcoded resolvers
 
 /// All builtin HTTP resolvers.
-pub const ALL: &dyn crate::Resolver = &&[
+pub const ALL: &dyn crate::Resolver<'static> = &&[
     #[cfg(feature = "ipify-org")]
     HTTP_IPIFY_ORG,
     #[cfg(feature = "whatismyipaddress-com")]
@@ -38,12 +38,14 @@ pub const ALL: &dyn crate::Resolver = &&[
 
 /// `http://api.ipify.org` HTTP resolver options
 #[cfg(feature = "ipify-org")]
-pub const HTTP_IPIFY_ORG: &dyn crate::Resolver =
+#[cfg_attr(docsrs, doc(cfg(feature = "ipify-org")))]
+pub const HTTP_IPIFY_ORG: &dyn crate::Resolver<'static> =
     &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
 
 /// `http://bot.whatismyipaddress.com` HTTP resolver options
 #[cfg(feature = "whatismyipaddress-com")]
-pub const HTTP_WHATISMYIPADDRESS_COM: &dyn crate::Resolver =
+#[cfg_attr(docsrs, doc(cfg(feature = "whatismyipaddress-com")))]
+pub const HTTP_WHATISMYIPADDRESS_COM: &dyn crate::Resolver<'static> =
     &Resolver::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -52,8 +54,10 @@ pub const HTTP_WHATISMYIPADDRESS_COM: &dyn crate::Resolver =
 /// HTTP resolver error
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Client error.
     #[error("{0}")]
     Client(hyper::Error),
+    /// URI parsing error.
     #[error("{0}")]
     Uri(http::uri::InvalidUri),
 }
@@ -75,6 +79,7 @@ impl Details {
         &self.uri
     }
 
+    /// HTTP server used in the resolution of our IP address.
     pub fn server(&self) -> SocketAddr {
         self.server
     }
@@ -88,8 +93,13 @@ impl Details {
 /// Method used to extract an IP address from a http response
 #[derive(Debug, Clone, Copy)]
 pub enum ExtractMethod {
+    /// Parses the body with whitespace trimmed as the IP address.
     PlainText,
+    /// Parses the body with double quotes and whitespace trimmed as the IP address.
     StripDoubleQuotes,
+    /// Parses the value of the JSON property `"ip"` within the body as the IP address.
+    ///
+    /// Note this method does not validate the JSON.
     ExtractJsonIpField,
 }
 
@@ -118,6 +128,7 @@ impl<'r> Resolver<'r> {
 
 impl Resolver<'static> {
     /// Create new HTTP resolver options from static
+    #[must_use]
     pub const fn new_static(uri: &'static str, method: ExtractMethod) -> Self {
         Self {
             uri: Cow::Borrowed(uri),
@@ -172,9 +183,9 @@ async fn resolve(
     let body = body.copy_to_bytes(body.remaining());
     let body_str = str::from_utf8(body.as_ref())?;
     let address_str = match method {
-        ExtractMethod::PlainText => body_str,
+        ExtractMethod::PlainText => body_str.trim(),
         ExtractMethod::ExtractJsonIpField => extract_json_ip_field(body_str)?,
-        ExtractMethod::StripDoubleQuotes => body_str.trim_matches('"'),
+        ExtractMethod::StripDoubleQuotes => body_str.trim().trim_matches('"'),
     };
     let address = address_str.parse()?;
     let details = Box::new(Details {

@@ -29,7 +29,7 @@ use crate::{Resolutions, Version};
 const DEFAULT_DNS_PORT: u16 = 53;
 
 /// All builtin DNS resolvers.
-pub const ALL: &dyn crate::Resolver = &&[
+pub const ALL: &dyn crate::Resolver<'static> = &&[
     #[cfg(feature = "opendns")]
     OPENDNS,
     #[cfg(feature = "google")]
@@ -38,11 +38,13 @@ pub const ALL: &dyn crate::Resolver = &&[
 
 /// Combined OpenDNS IPv4 and IPv6 options.
 #[cfg(feature = "opendns")]
-pub const OPENDNS: &dyn crate::Resolver = &&[OPENDNS_V4, OPENDNS_V6];
+#[cfg_attr(docsrs, doc(cfg(feature = "opendns")))]
+pub const OPENDNS: &dyn crate::Resolver<'static> = &&[OPENDNS_V4, OPENDNS_V6];
 
 /// OpenDNS IPv4 DNS resolver options.
 #[cfg(feature = "opendns")]
-pub const OPENDNS_V4: &dyn crate::Resolver = &Resolver::new_static(
+#[cfg_attr(docsrs, doc(cfg(feature = "opendns")))]
+pub const OPENDNS_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
     "myip.opendns.com",
     &[
         IpAddr::V4(Ipv4Addr::new(208, 67, 222, 222)),
@@ -56,7 +58,8 @@ pub const OPENDNS_V4: &dyn crate::Resolver = &Resolver::new_static(
 
 /// OpenDNS IPv6 DNS resolver options.
 #[cfg(feature = "opendns")]
-pub const OPENDNS_V6: &dyn crate::Resolver = &Resolver::new_static(
+#[cfg_attr(docsrs, doc(cfg(feature = "opendns")))]
+pub const OPENDNS_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
     "myip.opendns.com",
     &[
         // 2620:0:ccc::2
@@ -70,11 +73,13 @@ pub const OPENDNS_V6: &dyn crate::Resolver = &Resolver::new_static(
 
 /// Combined Google DNS IPv4 and IPv6 options
 #[cfg(feature = "google")]
-pub const GOOGLE: &dyn crate::Resolver = &&[GOOGLE_V4, GOOGLE_V6];
+#[cfg_attr(docsrs, doc(cfg(feature = "google")))]
+pub const GOOGLE: &dyn crate::Resolver<'static> = &&[GOOGLE_V4, GOOGLE_V6];
 
 /// Google DNS IPv4 DNS resolver options
 #[cfg(feature = "google")]
-pub const GOOGLE_V4: &dyn crate::Resolver = &Resolver::new_static(
+#[cfg_attr(docsrs, doc(cfg(feature = "google")))]
+pub const GOOGLE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
     "o-o.myaddr.l.google.com",
     &[
         IpAddr::V4(Ipv4Addr::new(216, 239, 32, 10)),
@@ -88,7 +93,8 @@ pub const GOOGLE_V4: &dyn crate::Resolver = &Resolver::new_static(
 
 /// Google DNS IPv6 DNS resolver options
 #[cfg(feature = "google")]
-pub const GOOGLE_V6: &dyn crate::Resolver = &Resolver::new_static(
+#[cfg_attr(docsrs, doc(cfg(feature = "google")))]
+pub const GOOGLE_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
     "o-o.myaddr.l.google.com",
     &[
         // 2001:4860:4802:32::a
@@ -123,16 +129,19 @@ pub struct Details {
 
 impl Details {
     /// DNS name used in the resolution of our IP address.
+    #[must_use]
     pub fn name(&self) -> &Name {
         &self.name
     }
 
     /// DNS server used in the resolution of our IP address.
+    #[must_use]
     pub fn server(&self) -> SocketAddr {
         self.server
     }
 
     /// The query method used in the resolution of our IP address.
+    #[must_use]
     pub fn query_method(&self) -> QueryMethod {
         self.method
     }
@@ -179,6 +188,7 @@ impl<'r> Resolver<'r> {
 
 impl Resolver<'static> {
     /// Create a new DNS resolver from static options.
+    #[must_use]
     pub const fn new_static(
         name: &'static str,
         servers: &'static [IpAddr],
@@ -251,14 +261,10 @@ impl<'r> Stream for DnsResolutions<'r> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match ready!(self.as_mut().project().stream.poll_next(cx)) {
             Some(o) => Poll::Ready(Some(o)),
-            None => {
-                if let Some(server) = self.servers.pop() {
-                    self.stream = resolve(server, self.port, self.query.clone(), self.method);
-                    self.project().stream.poll_next(cx)
-                } else {
-                    Poll::Ready(None)
-                }
-            }
+            None => self.servers.pop().map_or(Poll::Ready(None), |server| {
+                self.stream = resolve(server, self.port, self.query.clone(), self.method);
+                self.project().stream.poll_next(cx)
+            }),
         }
     }
 }
