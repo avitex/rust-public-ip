@@ -8,7 +8,7 @@
 Documentation hosted on [docs.rs](https://docs.rs/public-ip).
 
 ```toml
-public-ip = "0.1.0"
+public-ip = "0.2"
 ```
 
 ## Example usage

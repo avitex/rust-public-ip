@@ -1,6 +1,6 @@
 [package]
 name = "public-ip"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["avitex <avitex@wfxlabs.com>"]
 edition = "2018"
 description = "Find the public IP address of a device"
