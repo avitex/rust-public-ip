@@ -1,5 +1,5 @@
 use futures_util::{future, StreamExt, TryStreamExt};
-use public_ip::{self, dns, http, Version};
+use public_ip::{dns, http, Version};
 
 #[tokio::main]
 async fn main() {
