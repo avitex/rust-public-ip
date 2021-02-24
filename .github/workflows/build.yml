@@ -33,9 +33,9 @@ jobs:
       - name: Test code with all features
         run: cargo test --all-features
       - name: Check code with only `tokio-dns-resolver` and `google` features enabled.
-        run: cargo test --no-default-features --features tokio-dns-resolver,google
+        run: cargo check --no-default-features --features tokio-dns-resolver,google
       - name: Check code with only `tokio-http-resolver` and `google` features enabled.
-        run: cargo test --no-default-features --features tokio-http-resolver,google
+        run: cargo check --no-default-features --features tokio-http-resolver,google
       - name: Lint code
         if: ${{ matrix.rust-toolchain == 'stable' }}
         run: cargo fmt -- --check && cargo clippy --all-features
