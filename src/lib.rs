@@ -1,120 +1,64 @@
-//! Crate providing a generic way to find the public IP address of the
-//! device it runs on, along with with some built in resolvers
-//!
-//! # Basic Usage
-//!
-//! ```rust
-//! use async_std::task;
-//! use public_ip::{dns, http, ToResolver, BoxToResolver};
-//!
-//! // List of resolvers to try and get an IP address from
-//! let resolver = vec![
-//!     BoxToResolver::new(dns::OPENDNS_RESOLVER),
-//!     BoxToResolver::new(http::HTTP_IPIFY_ORG_RESOLVER),
-//! ].to_resolver();
-//! // Attempt to get an IP address and print it
-//! if let Some(ip) = task::block_on(public_ip::resolve_address(resolver)) {
-//!     println!("public ip address: {:?}", ip);
-//! } else {
-//!     println!("couldn't get an IP address");
-//! }
-//! ```
-//!
-//! # Usage with Resolution
-//!
-//! ```rust
-//! use std::any::Any;
-//!
-//! use async_std::task;
-//! use public_ip::{dns, ToResolver, Resolution};
-//!  
-//! // List of resolvers to try and get an IP address from
-//! let resolver = dns::OPENDNS_RESOLVER.to_resolver();
-//! // Attempt to get an IP address and print it
-//! if let Some(resolution) = task::block_on(public_ip::resolve(resolver)) {
-//!     if let Some(resolution) = Any::downcast_ref::<dns::DnsResolution>(&resolution) {
-//!         println!("public ip address {:?} resolved from {:?} ({:?})",
-//!             resolution.address(),
-//!             resolution.name(),
-//!             resolution.server(),
-//!         );
-//!     }
-//! } else {
-//!     println!("couldn't get an IP address");
-//! }
-//! ```
+mod error;
 
-mod resolver;
-
-#[cfg(any(feature = "http-resolver", feature = "dns-resolver"))]
-mod util;
+#[cfg(any(
+    all(feature = "dns-resolver", not(feature = "tokio-dns-resolver")),
+    all(feature = "http-resolver", not(feature = "tokio-http-resolver"))
+))]
+compile_error!("tokio is the only supported runtime currently - consider creating a PR or issue");
 
 #[cfg(feature = "dns-resolver")]
 pub mod dns;
-
 #[cfg(feature = "http-resolver")]
 pub mod http;
 
 use std::any::Any;
-use std::fmt::Debug;
 use std::net::IpAddr;
+use std::pin::Pin;
+use std::slice;
+use std::task::{Context, Poll};
 
-use futures::stream::{BoxStream, StreamExt};
+use futures_core::Stream;
+use futures_util::ready;
+use futures_util::stream::{self, BoxStream, StreamExt};
+use pin_project_lite::pin_project;
 
-pub use crate::resolver::*;
+pub use crate::error::Error;
 
-/// Boxed `dyn Resolution`
-pub type BoxResolution = Box<dyn Resolution>;
-/// Boxed `dyn ResolutionError`
-pub type BoxResolutionError = Box<dyn ResolutionError>;
-/// Boxed `dyn Stream<Item = Result<BoxResolution, BoxResolutionError>>`
-pub type BoxResolutionStream = BoxStream<'static, Result<BoxResolution, BoxResolutionError>>;
+pub type Details = Box<dyn Any + Send + Sync + 'static>;
+pub type Resolutions<'a> = BoxStream<'a, Result<(IpAddr, Details), Error>>;
 
-///////////////////////////////////////////////////////////////////////////////
-
-/// The successful product of a resolver
-///
-/// As well as containing the IP address resolved,
-/// resolvers will contain the specific parameters
-/// used in the resolution in their concrete type.
-/// Using `Any` allows you to downcast them to the
-/// specific type and retrive them.
-pub trait Resolution: Send + Any {
-    /// The IP address resolved
-    fn address(&self) -> IpAddr;
+/// The version of IP address to resolve.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Version {
+    V4,
+    V6,
+    Any,
 }
 
-impl Resolution for Box<dyn Resolution> {
-    fn address(&self) -> IpAddr {
-        self.as_ref().address()
+impl Version {
+    pub fn matches(self, addr: IpAddr) -> bool {
+        self == Version::Any
+            || (self == Version::V4 && addr.is_ipv4())
+            || (self == Version::V6 && addr.is_ipv6())
     }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-/// An error produced while attempting to resolve
-pub trait ResolutionError: Send + Any + Debug {}
-
-impl<T> ResolutionError for T where T: Send + Any + Debug {}
-
-///////////////////////////////////////////////////////////////////////////////
-
 /// Attempts resolve a single address (best effort)
-pub async fn resolve_address<R>(resolver: R) -> Option<IpAddr>
-where
-    R: Resolver<DefaultResolverContext> + Unpin,
-    R::Stream: Unpin,
-{
-    resolve(resolver).await.as_ref().map(Resolution::address)
+pub async fn resolve_address(resolver: impl Resolver<'_>, version: Version) -> Option<IpAddr> {
+    resolve_details(resolver, version)
+        .await
+        .map(|(addr, _)| addr)
 }
 
 /// Attempts to resolve to a resolution (best effort)
-pub async fn resolve<R>(resolver: R) -> Option<R::Resolution>
-where
-    R: Resolver<DefaultResolverContext> + Unpin,
-    R::Stream: Unpin,
-{
-    let mut resolution_stream = resolve_stream(resolver);
+pub async fn resolve_details(
+    resolver: impl Resolver<'_>,
+    version: Version,
+) -> Option<(IpAddr, Details)> {
+    let mut resolution_stream = resolver.resolve(version);
     loop {
         match resolution_stream.next().await {
             Some(Ok(resolution)) => return Some(resolution),
@@ -124,10 +68,94 @@ where
     }
 }
 
-/// Resolves a stream with a default context
-pub fn resolve_stream<R>(mut resolver: R) -> R::Stream
-where
-    R: Resolver<DefaultResolverContext>,
-{
-    (&mut resolver).resolve(DefaultResolverContext)
+pub fn resolve_stream<'r>(resolver: impl Resolver<'r>, version: Version) -> Resolutions<'r> {
+    resolver.resolve(version)
 }
+
+///////////////////////////////////////////////////////////////////////////////
+
+/// Trait implemented by IP address resolver.
+pub trait Resolver<'a>: Send + Sync {
+    /// Resolves a stream of IP addresses with a given [`Version`].
+    fn resolve(&self, version: Version) -> Resolutions<'a>;
+}
+
+impl<'r> Resolver<'r> for &'r dyn Resolver<'r> {
+    fn resolve(&self, version: Version) -> Resolutions<'r> {
+        (**self).resolve(version)
+    }
+}
+
+impl<'r, R> Resolver<'r> for &'r [R]
+where
+    R: Resolver<'r>,
+{
+    fn resolve(&self, version: Version) -> Resolutions<'r> {
+        pin_project! {
+            struct DynSliceResolver<'r, R> {
+                version: Version,
+                resolvers: slice::Iter<'r, R>,
+                #[pin]
+                stream: Resolutions<'r>,
+            }
+        }
+
+        impl<'r, R> Stream for DynSliceResolver<'r, R>
+        where
+            R: Resolver<'r>,
+        {
+            type Item = Result<(IpAddr, Details), Error>;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match ready!(self.as_mut().project().stream.poll_next(cx)) {
+                    Some(o) => Poll::Ready(Some(o)),
+                    None => {
+                        if let Some(next) = self.resolvers.next() {
+                            self.stream = next.resolve(self.version);
+                            self.project().stream.poll_next(cx)
+                        } else {
+                            Poll::Ready(None)
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut resolvers = self.iter();
+
+        let stream = match resolvers.next() {
+            Some(first) => first.resolve(version),
+            None => Box::pin(stream::empty()),
+        };
+
+        let resolver = DynSliceResolver {
+            version,
+            resolvers,
+            stream,
+        };
+
+        Box::pin(resolver)
+    }
+}
+
+macro_rules! resolver_array {
+    () => {
+        resolver_array!(
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
+        );
+    };
+    ($($n:expr),*) => {
+        $(
+            impl<'r> Resolver<'r> for &'r [&'r dyn Resolver<'r>; $n] {
+                fn resolve(&self, version: Version) -> Resolutions<'r> {
+                    Resolver::resolve(&&self[..], version)
+                }
+            }
+        )*
+    }
+}
+
+resolver_array!();

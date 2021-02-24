@@ -1,0 +1,55 @@
+name: build
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        rust-toolchain: [stable, nightly]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust-toolchain }}
+          components: clippy, rustfmt
+          override: true
+      - name: Verify versions
+        run: rustc --version && rustup --version && cargo --version
+      - name: Cache build artifacts
+        id: cache-cargo
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.rust-toolchain }}
+      - name: Test code with default features
+        run: cargo test
+      - name: Test code with all features
+        run: cargo test --all-features
+      - name: Check code with no features
+        run: cargo check --no-default-features
+      - name: Lint code
+        if: ${{ matrix.rust-toolchain == 'stable' }}
+        run: cargo fmt -- --check && cargo clippy --all-features
+  code_coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Install Rust nightly components
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          components: llvm-tools-preview
+      - uses: Swatinem/fucov@v1
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v1
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}

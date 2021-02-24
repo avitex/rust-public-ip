@@ -1,38 +1,50 @@
 use std::borrow::Cow;
-use std::convert::TryFrom;
 use std::future::Future;
-use std::net::IpAddr;
-use std::str;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::{io, str};
 
-use futures::future::{self, FutureExt, TryFutureExt};
-use futures::stream::{self, BoxStream};
-use http::uri::{InvalidUri as InvalidUriError, Uri};
+use futures_core::Stream;
+use futures_util::future::BoxFuture;
+use futures_util::{future, ready, stream};
+use http::{Response, Uri};
 use hyper::{
     body::{self, Body, Buf},
-    client::{Builder, Client, HttpConnector},
-    rt::Executor,
+    client::{Builder, Client},
+    service::Service,
 };
-use once_cell::sync::{Lazy, OnceCell};
-use regex::Regex;
+use pin_project_lite::pin_project;
+use thiserror::Error;
 
-use crate::{
-    util, AutoResolverContext, Resolution, Resolver, ResolverContext, ResultResolver, ToResolver,
+#[cfg(feature = "tokio-http-resolver")]
+use hyper::client::connect::{
+    dns::{GaiAddrs, GaiFuture, GaiResolver, Name},
+    HttpConnector, HttpInfo,
 };
+
+use crate::{Resolutions, Version};
+
+/// HTTP resolver error
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("{0}")]
+    Client(hyper::Error),
+    #[error("{0}")]
+    Uri(http::uri::InvalidUri),
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 
 /// `http://api.ipify.org` HTTP resolver options
-pub const HTTP_IPIFY_ORG_RESOLVER: HttpResolverOptions =
-    HttpResolverOptions::new_static("http://api.ipify.org", ExtractMethod::PlainText);
+pub const HTTP_IPIFY_ORG_RESOLVER: &dyn crate::Resolver =
+    &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
 
 /// `http://bot.whatismyipaddress.com` HTTP resolver options
-pub const HTTP_WHATISMYIPADDRESS_COM_RESOLVER: HttpResolverOptions =
-    HttpResolverOptions::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
+pub const HTTP_WHATISMYIPADDRESS_COM_RESOLVER: &dyn crate::Resolver =
+    &Resolver::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
 
 ///////////////////////////////////////////////////////////////////////////////
-
-/// Internal HTTP client used by a HTTP resolver
-pub type HttpClient = Client<HttpConnector, Body>;
 
 /// Method used to extract an IP address from a http response
 #[derive(Debug, Clone, Copy)]
@@ -42,28 +54,20 @@ pub enum ExtractMethod {
     ExtractJsonIpField,
 }
 
-/// An error produced from a HTTP resolver
-#[derive(Debug)]
-pub enum HttpResolutionError {
-    Uri(InvalidUriError),
-    Client(hyper::Error),
-    EmptyIpAddr,
-    InvalidIpAddr,
-    InvalidUtf8,
-}
+///////////////////////////////////////////////////////////////////////////////
 
 /// Options to build a HTTP resolver
 #[derive(Clone, Debug)]
-pub struct HttpResolverOptions<'a> {
-    uri: Cow<'a, str>,
+pub struct Resolver<'r> {
+    uri: Cow<'r, str>,
     method: ExtractMethod,
 }
 
-impl<'a> HttpResolverOptions<'a> {
+impl<'r> Resolver<'r> {
     /// Create new HTTP resolver options
     pub fn new<U>(uri: U, method: ExtractMethod) -> Self
     where
-        U: Into<Cow<'a, str>>,
+        U: Into<Cow<'r, str>>,
     {
         Self {
             uri: uri.into(),
@@ -72,7 +76,7 @@ impl<'a> HttpResolverOptions<'a> {
     }
 }
 
-impl HttpResolverOptions<'static> {
+impl Resolver<'static> {
     /// Create new HTTP resolver options from static
     pub const fn new_static(uri: &'static str, method: ExtractMethod) -> Self {
         Self {
@@ -82,32 +86,24 @@ impl HttpResolverOptions<'static> {
     }
 }
 
-impl<'a, C> ToResolver<C> for HttpResolverOptions<'a>
-where
-    C: HttpResolverContext,
-{
-    type Resolver = ResultResolver<HttpResolver, HttpResolutionError>;
-
-    fn to_resolver(&self) -> Self::Resolver {
-        let result = Uri::try_from(self.uri.as_ref())
-            .map_err(HttpResolutionError::Uri)
-            .map(|uri| HttpResolver::new(uri, self.method));
-        ResultResolver::new(result)
-    }
-}
+///////////////////////////////////////////////////////////////////////////////
 
 /// A resolution produced from a HTTP resolver
 #[derive(Clone, Debug)]
-pub struct HttpResolution {
-    address: IpAddr,
+pub struct Details {
     uri: Uri,
+    server: SocketAddr,
     method: ExtractMethod,
 }
 
-impl HttpResolution {
+impl Details {
     /// URI used in the resolution of the associated IP address
     pub fn uri(&self) -> &Uri {
         &self.uri
+    }
+
+    pub fn server(&self) -> SocketAddr {
+        self.server
     }
 
     /// The extract method used in the resolution of the associated IP address
@@ -116,107 +112,193 @@ impl HttpResolution {
     }
 }
 
-impl Resolution for HttpResolution {
-    fn address(&self) -> IpAddr {
-        self.address
+///////////////////////////////////////////////////////////////////////////////
+
+pin_project! {
+    #[project = HttpResolutionsProj]
+    enum HttpResolutions<'r> {
+        HttpRequest {
+            #[pin]
+            response: BoxFuture<'r, Result<(IpAddr, crate::Details), crate::Error>>,
+        },
+        Done,
     }
 }
 
-/// The HTTP resolver
-pub struct HttpResolver {
+impl<'r> Stream for HttpResolutions<'r> {
+    type Item = Result<(IpAddr, crate::Details), crate::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.as_mut().project() {
+            HttpResolutionsProj::HttpRequest { response } => {
+                let response = ready!(response.poll(cx));
+                *self = HttpResolutions::Done;
+                Poll::Ready(Some(response))
+            }
+            HttpResolutionsProj::Done => Poll::Ready(None),
+        }
+    }
+}
+
+async fn resolve(
+    version: Version,
     uri: Uri,
     method: ExtractMethod,
+) -> Result<(IpAddr, crate::Details), crate::Error> {
+    let response = http_client(version)
+        .get(uri.clone())
+        .await
+        .map_err(Error::Client)?;
+    // TODO
+    let server = remote_addr(&response);
+    let mut body = body::aggregate(response.into_body())
+        .await
+        .map_err(Error::Client)?;
+    let body = body.copy_to_bytes(body.remaining());
+    let body_str = str::from_utf8(body.as_ref())?;
+    let address_str = match method {
+        ExtractMethod::PlainText => body_str,
+        ExtractMethod::ExtractJsonIpField => extract_json_ip_field(body_str)?,
+        ExtractMethod::StripDoubleQuotes => body_str.trim_matches('"'),
+    };
+    let address = address_str.parse()?;
+    let details = Box::new(Details {
+        uri,
+        method,
+        server,
+    });
+    Ok((address, crate::Details::from(details)))
 }
 
-impl HttpResolver {
-    /// Create new HTTP resolver
-    pub fn new(uri: Uri, method: ExtractMethod) -> Self {
-        Self { uri, method }
-    }
-}
-
-impl<C> Resolver<C> for HttpResolver
-where
-    C: HttpResolverContext,
-{
-    type Error = HttpResolutionError;
-    type Resolution = HttpResolution;
-    type Stream = BoxStream<'static, Result<Self::Resolution, Self::Error>>;
-
-    fn resolve(&mut self, cx: C) -> Self::Stream {
-        // Get client and tokio runtime
-        let client = cx.client();
-        let runtime = cx.runtime();
-        let uri = self.uri.clone();
+impl<'r> crate::Resolver<'r> for Resolver<'r> {
+    fn resolve(&self, version: Version) -> Resolutions<'r> {
         let method = self.method;
-        // Init JSON IP field regex
-        static JSON_IP_FIELD_REGEX: Lazy<Regex> =
-            Lazy::new(|| Regex::new(r#"(?i)"ip"\s*:\s*"(.+?)""#).expect("invalid regex"));
-
-        let req_fut = client
-            .get(uri.clone())
-            .and_then(|res| body::aggregate(res.into_body()))
-            .map_err(HttpResolutionError::Client)
-            .map_ok(move |mut body| {
-                let body = body.copy_to_bytes(body.remaining());
-                let body_str =
-                    str::from_utf8(body.as_ref()).map_err(|_| HttpResolutionError::InvalidUtf8)?;
-                let address_str_opt = match method {
-                    ExtractMethod::PlainText => Some(body_str),
-                    ExtractMethod::ExtractJsonIpField => (*JSON_IP_FIELD_REGEX)
-                        .captures(body_str)
-                        .and_then(|caps| caps.get(1))
-                        .map(|cap| cap.as_str()),
-                    ExtractMethod::StripDoubleQuotes => Some(body_str.trim_matches('"')),
-                };
-                address_str_opt
-                    .ok_or(HttpResolutionError::EmptyIpAddr)
-                    .and_then(|s| s.parse().map_err(|_| HttpResolutionError::InvalidIpAddr))
-                    .map(|address| HttpResolution {
-                        address,
-                        uri,
-                        method,
-                    })
-            })
-            .and_then(future::ready);
-
-        let fut = runtime
-            .spawn(req_fut)
-            .map(|res| res.expect("failed to execute request future"));
-
-        Box::pin(stream::once(fut))
+        let uri: Uri = match self.uri.as_ref().parse() {
+            Ok(name) => name,
+            Err(err) => return Box::pin(stream::once(future::ready(Err(crate::Error::new(err))))),
+        };
+        Box::pin(HttpResolutions::HttpRequest {
+            response: Box::pin(resolve(version, uri, method)),
+        })
     }
 }
 
+fn extract_json_ip_field(s: &str) -> Result<&str, crate::Error> {
+    s.splitn(2, r#""ip":"#)
+        .nth(1)
+        .and_then(|after_prop| after_prop.split('"').nth(1))
+        .ok_or(crate::Error::Addr)
+}
+
 ///////////////////////////////////////////////////////////////////////////////
-// HttpContext
+// Client
 
-static DEFAULT_HTTP_CLIENT: OnceCell<HttpClient> = OnceCell::new();
+#[cfg(feature = "tokio-http-resolver")]
+fn http_client(version: Version) -> Client<HttpConnector<GaiVersionResolver>, Body> {
+    let resolver = GaiVersionResolver(version);
+    let connector = HttpConnector::new_with_resolver(resolver);
+    Builder::default().build(connector)
+}
 
-/// Context used in a HTTP resolver
-pub trait HttpResolverContext: ResolverContext {
-    fn client<'a>(&self) -> &'a HttpClient {
-        let executor = TokioExecutor(self.runtime());
-        DEFAULT_HTTP_CLIENT.get_or_init(|| Builder::default().executor(executor).build_http())
+#[cfg(feature = "tokio-http-resolver")]
+fn remote_addr(response: &Response<Body>) -> SocketAddr {
+    response
+        .extensions()
+        .get::<HttpInfo>()
+        .unwrap()
+        .remote_addr()
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// HTTP DNS Resolver
+
+#[derive(Clone)]
+struct GaiVersionResolver(Version);
+
+impl Service<Name> for GaiVersionResolver {
+    type Response = GaiVersionAddrs;
+
+    type Error = io::Error;
+
+    type Future = GaiVersionFuture;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 
-    fn runtime<'a>(&self) -> &'a util::TokioRuntime {
-        util::tokio_runtime()
+    fn call(&mut self, req: Name) -> Self::Future {
+        GaiVersionFuture {
+            version: self.0,
+            inner: GaiResolver::new().call(req),
+        }
     }
 }
 
-impl<T> HttpResolverContext for T where T: AutoResolverContext {}
+pin_project! {
+    struct GaiVersionFuture {
+        version: Version,
+        #[pin]
+        inner: GaiFuture,
+    }
+}
 
-///////////////////////////////////////////////////////////////////////////////
-// Hyper executor wrapper
+impl Future for GaiVersionFuture {
+    type Output = Result<GaiVersionAddrs, io::Error>;
 
-struct TokioExecutor<'a>(&'a util::TokioRuntime);
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let version = self.version;
+        self.project()
+            .inner
+            .poll(cx)
+            .map_ok(|answers| GaiVersionAddrs { version, answers })
+    }
+}
 
-impl<'a, F> Executor<F> for TokioExecutor<'a>
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    fn execute(&self, fut: F) {
-        self.0.spawn(fut);
+struct GaiVersionAddrs {
+    version: Version,
+    answers: GaiAddrs,
+}
+
+impl Iterator for GaiVersionAddrs {
+    type Item = SocketAddr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(addr) = self.answers.next() {
+            if self.version.matches(addr.ip()) {
+                return Some(addr);
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_json_ip_field() {
+        const VALID: &str = r#"{
+            "ip": "123.123.123.123",
+        }"#;
+
+        const INVALID: &str = r#"{
+            "ipp": "123.123.123.123",
+        }"#;
+
+        const VALID_INVALID: &str = r#"{
+            "ip": "123.123.123.123",
+            "ip": "321.321.321.321",
+        }"#;
+
+        assert_eq!(extract_json_ip_field(VALID).unwrap(), "123.123.123.123");
+        assert_eq!(
+            extract_json_ip_field(VALID_INVALID).unwrap(),
+            "123.123.123.123"
+        );
+        assert!(matches!(
+            extract_json_ip_field(INVALID).unwrap_err(),
+            crate::Error::Addr
+        ));
     }
 }

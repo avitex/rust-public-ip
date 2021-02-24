@@ -9,24 +9,24 @@ homepage = "https://github.com/avitex/rust-public-ip"
 repository = "https://github.com/avitex/rust-public-ip"
 license = "MIT"
 
-[badges]
-travis-ci = { repository = "avitex/rust-public-ip", branch = "master" }
-
 [features]
-default = ["dns-resolver", "http-resolver"]
-dns-resolver = ["tokio", "trust-dns-client", "trust-dns-proto", "once_cell"]
-http-resolver = ["tokio", "http", "hyper", "regex", "once_cell"]
+default = ["tokio-dns-resolver", "tokio-http-resolver"]
+dns-resolver = ["trust-dns-proto"]
+http-resolver = ["http", "hyper"]
+tokio-dns-resolver = ["dns-resolver", "tokio", "trust-dns-client", "trust-dns-proto/tokio-runtime"]
+tokio-http-resolver = ["http-resolver", "tokio", "hyper/runtime"]
 
 [dependencies]
-futures = "0.3"
+thiserror = "1"
+pin-project-lite = "0.2"
+futures-core = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false }
 
 trust-dns-client = { version = "0.20", optional = true }
-trust-dns-proto = { version = "0.20", optional = true }
-once_cell = { version = "~1", optional = true }
-hyper = { version = "0.14", features = ["client", "runtime", "http2"], optional = true }
+trust-dns-proto = { version = "0.20", optional = true, default-features = false }
+hyper = { version = "0.14", features = ["client", "http1"], optional = true }
 http = { version = "0.2", optional = true }
-regex = { version = "~1", optional = true }
 tokio = { version = "1", optional = true }
 
 [dev-dependencies]
-async-std = "~1"
+tokio = { version = "~1", features = ["macros"] }

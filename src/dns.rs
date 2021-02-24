@@ -1,35 +1,41 @@
 use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::{mem, str};
+use std::pin::Pin;
+use std::str;
+use std::task::{Context, Poll};
 
-use futures::future::{self, FutureExt, TryFutureExt};
-use futures::stream::{self, BoxStream, StreamExt};
-use tokio::net::UdpSocket;
-use trust_dns_client::{
-    client::AsyncClient as AsyncDnsClient,
-    op::{DnsResponse, Query as DnsQuery},
-    rr::{Name as DnsName, RData as DnsRData, RecordType as DnsRecordType},
-    udp::UdpClientStream,
-};
+use futures_core::Stream;
+use futures_util::ready;
+use futures_util::{future, stream};
+use pin_project_lite::pin_project;
 use trust_dns_proto::{
-    error::ProtoError as DnsProtoError,
-    xfer::{DnsHandle, DnsRequestOptions},
+    error::{ProtoError, ProtoErrorKind},
+    op::Query,
+    rr::{Name, RData, RecordType},
+    udp::UdpClientStream,
+    xfer::{DnsHandle, DnsRequestOptions, DnsResponse},
 };
 
-use crate::{
-    util, AutoResolverContext, Resolution, Resolver, ResolverContext, ResultResolver, ToResolver,
-};
+#[cfg(feature = "tokio-dns-resolver")]
+use tokio::{net::UdpSocket, runtime::Handle};
+#[cfg(feature = "tokio-dns-resolver")]
+use trust_dns_client::client::AsyncClient;
 
-const DNS_SOCKET_PORT: u16 = 53;
+/// DNS resolver error
+pub type Error = ProtoError;
+
+use crate::{Resolutions, Version};
 
 ///////////////////////////////////////////////////////////////////////////////
 // Hardcoded DNS resolvers
 
+const DEFAULT_DNS_PORT: u16 = 53;
+
 /// Combined OpenDNS IPv4 and IPv6 options
-pub const OPENDNS_RESOLVER: &[DnsResolverOptions] = &[OPENDNS_RESOLVER_V4, OPENDNS_RESOLVER_V6];
+pub const OPENDNS_RESOLVER: &dyn crate::Resolver = &&[OPENDNS_RESOLVER_V4, OPENDNS_RESOLVER_V6];
 
 /// OpenDNS IPv4 DNS resolver options
-pub const OPENDNS_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::new_static(
+pub const OPENDNS_RESOLVER_V4: &dyn crate::Resolver = &Resolver::new_static(
     "myip.opendns.com",
     &[
         IpAddr::V4(Ipv4Addr::new(208, 67, 222, 222)),
@@ -37,11 +43,12 @@ pub const OPENDNS_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::new_stat
         IpAddr::V4(Ipv4Addr::new(208, 67, 222, 220)),
         IpAddr::V4(Ipv4Addr::new(208, 67, 220, 222)),
     ],
+    DEFAULT_DNS_PORT,
     QueryMethod::A,
 );
 
 /// OpenDNS IPv6 DNS resolver options
-pub const OPENDNS_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::new_static(
+pub const OPENDNS_RESOLVER_V6: &dyn crate::Resolver = &Resolver::new_static(
     "myip.opendns.com",
     &[
         // 2620:0:ccc::2
@@ -49,15 +56,16 @@ pub const OPENDNS_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::new_stat
         // 2620:0:ccd::2
         IpAddr::V6(Ipv6Addr::new(9760, 0, 3277, 0, 0, 0, 0, 2)),
     ],
+    DEFAULT_DNS_PORT,
     QueryMethod::AAAA,
 );
 
 /// Combined Google DNS IPv4 and IPv6 options
-pub const GOOGLE_DNS_TXT_RESOLVER: &[DnsResolverOptions] =
-    &[GOOGLE_DNS_TXT_RESOLVER_V4, GOOGLE_DNS_TXT_RESOLVER_V6];
+pub const GOOGLE_DNS_TXT_RESOLVER: &dyn crate::Resolver =
+    &&[GOOGLE_DNS_TXT_RESOLVER_V4, GOOGLE_DNS_TXT_RESOLVER_V6];
 
 /// Google DNS IPv4 DNS resolver options
-pub const GOOGLE_DNS_TXT_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::new_static(
+pub const GOOGLE_DNS_TXT_RESOLVER_V4: &dyn crate::Resolver = &Resolver::new_static(
     "o-o.myaddr.l.google.com",
     &[
         IpAddr::V4(Ipv4Addr::new(216, 239, 32, 10)),
@@ -65,11 +73,12 @@ pub const GOOGLE_DNS_TXT_RESOLVER_V4: DnsResolverOptions = DnsResolverOptions::n
         IpAddr::V4(Ipv4Addr::new(216, 239, 36, 10)),
         IpAddr::V4(Ipv4Addr::new(216, 239, 38, 10)),
     ],
+    DEFAULT_DNS_PORT,
     QueryMethod::TXT,
 );
 
 /// Google DNS IPv6 DNS resolver options
-pub const GOOGLE_DNS_TXT_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::new_static(
+pub const GOOGLE_DNS_TXT_RESOLVER_V6: &dyn crate::Resolver = &Resolver::new_static(
     "o-o.myaddr.l.google.com",
     &[
         // 2001:4860:4802:32::a
@@ -81,65 +90,11 @@ pub const GOOGLE_DNS_TXT_RESOLVER_V6: DnsResolverOptions = DnsResolverOptions::n
         // 2001:4860:4802:38::a
         IpAddr::V6(Ipv6Addr::new(8193, 18528, 18434, 56, 0, 0, 0, 10)),
     ],
+    DEFAULT_DNS_PORT,
     QueryMethod::TXT,
 );
 
 ///////////////////////////////////////////////////////////////////////////////
-// DNS client support
-
-async fn query_dns_server(
-    rt: &util::TokioRuntime,
-    host: IpAddr,
-    query: DnsQuery,
-) -> Result<DnsResponse, DnsProtoError> {
-    let addr = SocketAddr::new(host, DNS_SOCKET_PORT);
-    let stream = UdpClientStream::<UdpSocket>::new(addr);
-    let (mut client, bg) = AsyncDnsClient::connect(stream).await?;
-    rt.spawn(bg);
-    let query_opts = DnsRequestOptions {
-        use_edns: true,
-        expects_multiple_responses: false,
-    };
-    client.lookup(query, query_opts).await
-}
-
-fn parse_dns_response(
-    mut response: DnsResponse,
-    method: QueryMethod,
-) -> Result<IpAddr, DnsResolutionError> {
-    let answer = match response.take_answers().into_iter().next() {
-        Some(answer) => answer,
-        None => return Err(DnsResolutionError::EmptyIpAddr),
-    };
-    match answer.into_data() {
-        DnsRData::A(addr) if method == QueryMethod::A => Ok(IpAddr::V4(addr)),
-        DnsRData::AAAA(addr) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr)),
-        DnsRData::TXT(txt) if method == QueryMethod::TXT => match txt.iter().next() {
-            Some(addr_bytes) => {
-                if let Ok(addr_str) = str::from_utf8(&addr_bytes[..]) {
-                    if let Ok(addr) = addr_str.parse() {
-                        return Ok(addr);
-                    }
-                }
-                Err(DnsResolutionError::InvalidIpAddr)
-            }
-            None => Err(DnsResolutionError::EmptyIpAddr),
-        },
-        _ => Err(DnsResolutionError::InvalidResponse),
-    }
-}
-
-///////////////////////////////////////////////////////////////////////////////
-
-/// An error produced from a DNS resolver
-#[derive(Debug)]
-pub enum DnsResolutionError {
-    Proto(DnsProtoError),
-    InvalidIpAddr,
-    InvalidResponse,
-    InvalidDnsName,
-    EmptyIpAddr,
-}
 
 /// Method used to query an IP address from a DNS server
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -150,20 +105,22 @@ pub enum QueryMethod {
 }
 
 /// Options to build a DNS resolver
-pub struct DnsResolverOptions<'a> {
-    name: Cow<'a, str>,
-    servers: Cow<'a, [IpAddr]>,
+pub struct Resolver<'r> {
+    port: u16,
+    name: Cow<'r, str>,
+    servers: Cow<'r, [IpAddr]>,
     method: QueryMethod,
 }
 
-impl<'a> DnsResolverOptions<'a> {
+impl<'r> Resolver<'r> {
     /// Create new DNS resolver options
-    pub fn new<N, S>(name: N, servers: S, method: QueryMethod) -> Self
+    pub fn new<N, S>(name: N, servers: S, port: u16, method: QueryMethod) -> Self
     where
-        N: Into<Cow<'a, str>>,
-        S: Into<Cow<'a, [IpAddr]>>,
+        N: Into<Cow<'r, str>>,
+        S: Into<Cow<'r, [IpAddr]>>,
     {
         Self {
+            port,
             name: name.into(),
             servers: servers.into(),
             method,
@@ -171,14 +128,16 @@ impl<'a> DnsResolverOptions<'a> {
     }
 }
 
-impl DnsResolverOptions<'static> {
+impl Resolver<'static> {
     /// Create new DNS resolver options from static
     pub const fn new_static(
         name: &'static str,
         servers: &'static [IpAddr],
+        port: u16,
         method: QueryMethod,
     ) -> Self {
         Self {
+            port,
             name: Cow::Borrowed(name),
             servers: Cow::Borrowed(servers),
             method,
@@ -186,35 +145,24 @@ impl DnsResolverOptions<'static> {
     }
 }
 
-impl<'a, C> ToResolver<C> for DnsResolverOptions<'a>
-where
-    C: DnsResolverContext,
-{
-    type Resolver = ResultResolver<DnsResolver, DnsResolutionError>;
-
-    fn to_resolver(&self) -> Self::Resolver {
-        let result = DnsResolver::new(self.name.to_string(), self.servers.to_vec(), self.method);
-        ResultResolver::new(result)
-    }
-}
+///////////////////////////////////////////////////////////////////////////////
 
 /// A resolution produced from a DNS resolver
 #[derive(Clone, Debug)]
-pub struct DnsResolution {
-    address: IpAddr,
-    server: IpAddr,
-    name: DnsName,
+pub struct Details {
+    server: SocketAddr,
+    name: Name,
     method: QueryMethod,
 }
 
-impl DnsResolution {
+impl Details {
     /// DNS name used in the resolution of the associated IP address
-    pub fn name(&self) -> &DnsName {
+    pub fn name(&self) -> &Name {
         &self.name
     }
 
     /// DNS server used in the resolution of the associated IP address
-    pub fn server(&self) -> IpAddr {
+    pub fn server(&self) -> SocketAddr {
         self.server
     }
 
@@ -224,87 +172,125 @@ impl DnsResolution {
     }
 }
 
-impl Resolution for DnsResolution {
-    fn address(&self) -> IpAddr {
-        self.address
+///////////////////////////////////////////////////////////////////////////////
+// DNS client support
+
+#[cfg(feature = "tokio-dns-resolver")]
+async fn dns_query(
+    server: SocketAddr,
+    query: Query,
+    query_opts: DnsRequestOptions,
+) -> Result<DnsResponse, ProtoError> {
+    let handle = Handle::current();
+    let stream = UdpClientStream::<UdpSocket>::new(server);
+    let (mut client, bg) = AsyncClient::connect(stream).await?;
+    handle.spawn(bg);
+    client.lookup(query, query_opts).await
+}
+
+fn parse_dns_response(
+    mut response: DnsResponse,
+    method: QueryMethod,
+) -> Result<IpAddr, crate::Error> {
+    let answer = match response.take_answers().into_iter().next() {
+        Some(answer) => answer,
+        None => return Err(crate::Error::Addr),
+    };
+    match answer.into_data() {
+        RData::A(addr) if method == QueryMethod::A => Ok(IpAddr::V4(addr)),
+        RData::AAAA(addr) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr)),
+        RData::TXT(txt) if method == QueryMethod::TXT => match txt.iter().next() {
+            Some(addr_bytes) => Ok(str::from_utf8(&addr_bytes[..])?.parse()?),
+            None => Err(crate::Error::Addr),
+        },
+        _ => Err(ProtoError::from(ProtoErrorKind::Message("invalid response")).into()),
     }
 }
 
-/// The DNS resolver
-#[derive(Clone, Debug)]
-pub struct DnsResolver {
-    query: DnsQuery,
-    servers: Vec<IpAddr>,
-    method: QueryMethod,
+fn resolve<'r>(server: IpAddr, port: u16, query: Query, method: QueryMethod) -> Resolutions<'r> {
+    let fut = async move {
+        let name = query.name().clone();
+        let server = SocketAddr::new(server, port);
+        let query_opts = DnsRequestOptions {
+            use_edns: true,
+            expects_multiple_responses: false,
+        };
+        let response = dns_query(server, query, query_opts).await?;
+        let addr = parse_dns_response(response, method)?;
+        let details = Box::new(Details {
+            name,
+            method,
+            server,
+        });
+        Ok((addr, crate::Details::from(details)))
+    };
+    Box::pin(stream::once(fut))
 }
 
-impl DnsResolver {
-    /// Create new DNS resolver
-    pub fn new<N, I>(name: N, servers: I, method: QueryMethod) -> Result<Self, DnsResolutionError>
-    where
-        N: Into<Cow<'static, str>>,
-        I: IntoIterator<Item = IpAddr>,
-    {
-        let servers = servers.into_iter().collect();
-        let record_type = match method {
-            QueryMethod::A => DnsRecordType::A,
-            QueryMethod::AAAA => DnsRecordType::AAAA,
-            QueryMethod::TXT => DnsRecordType::TXT,
+///////////////////////////////////////////////////////////////////////////////
+
+pin_project! {
+    struct DnsResolutions<'r> {
+        port: u16,
+        version: Version,
+        query: Query,
+        method: QueryMethod,
+        servers: Vec<IpAddr>,
+        #[pin]
+        stream: Resolutions<'r>,
+    }
+}
+
+impl<'r> Stream for DnsResolutions<'r> {
+    type Item = Result<(IpAddr, crate::Details), crate::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match ready!(self.as_mut().project().stream.poll_next(cx)) {
+            Some(o) => Poll::Ready(Some(o)),
+            None => {
+                if let Some(server) = self.servers.pop() {
+                    self.stream = resolve(server, self.port, self.query.clone(), self.method);
+                    self.project().stream.poll_next(cx)
+                } else {
+                    Poll::Ready(None)
+                }
+            }
+        }
+    }
+}
+
+impl<'r> crate::Resolver<'r> for Resolver<'r> {
+    fn resolve(&self, version: Version) -> Resolutions<'r> {
+        let port = self.port;
+        let method = self.method;
+        let name = match Name::from_ascii(self.name.as_ref()) {
+            Ok(name) => name,
+            Err(err) => return Box::pin(stream::once(future::ready(Err(crate::Error::new(err))))),
         };
-        let name =
-            DnsName::from_ascii(name.into()).map_err(|_| DnsResolutionError::InvalidDnsName)?;
-        let query = DnsQuery::query(name, record_type);
-        Ok(Self {
+        let mut servers: Vec<_> = self
+            .servers
+            .iter()
+            .copied()
+            .filter(|addr| version.matches(*addr))
+            .collect();
+        let first_server = match servers.pop() {
+            Some(server) => server,
+            None => return Box::pin(stream::empty()),
+        };
+        let record_type = match self.method {
+            QueryMethod::A => RecordType::A,
+            QueryMethod::AAAA => RecordType::AAAA,
+            QueryMethod::TXT => RecordType::TXT,
+        };
+        let query = Query::query(name, record_type);
+        let stream = resolve(first_server, port, query.clone(), method);
+        Box::pin(DnsResolutions {
+            port,
+            version,
             query,
-            servers,
             method,
+            servers,
+            stream,
         })
     }
 }
-
-impl<C> Resolver<C> for DnsResolver
-where
-    C: DnsResolverContext,
-{
-    type Error = DnsResolutionError;
-    type Stream = BoxStream<'static, Result<Self::Resolution, Self::Error>>;
-    type Resolution = DnsResolution;
-
-    fn resolve(&mut self, cx: C) -> Self::Stream {
-        let runtime = cx.runtime();
-        let mut servers = Vec::new();
-        let query = self.query.clone();
-        let method = self.method;
-        mem::swap(&mut servers, &mut self.servers);
-        let queries = servers
-            .into_iter()
-            .map(move |server| (server, query.clone(), method));
-
-        let stream = stream::iter(queries).then(move |(server, query, method)| {
-            let name = query.name().clone();
-            let query_fut = query_dns_server(runtime, server, query)
-                .map_err(DnsResolutionError::Proto)
-                .and_then(move |r| future::ready(parse_dns_response(r, method)))
-                .map_ok(move |address| DnsResolution {
-                    name,
-                    method,
-                    server,
-                    address,
-                });
-
-            runtime
-                .spawn(query_fut)
-                .map(|res| res.expect("failed to execute query future"))
-        });
-        Box::pin(stream)
-    }
-}
-
-/// Context used in a DNS resolver
-pub trait DnsResolverContext: ResolverContext {
-    fn runtime<'a>(&self) -> &'a util::TokioRuntime {
-        util::tokio_runtime()
-    }
-}
-
-impl<T> DnsResolverContext for T where T: AutoResolverContext {}

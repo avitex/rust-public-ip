@@ -1,17 +1,25 @@
 use std::any::Any;
 
-use async_std::task;
-use public_ip::{self, dns, Resolution, ToResolver};
+use public_ip::{self, dns, http, Version};
 
-fn main() {
-    // List of resolvers to try and get an IP address from
-    let resolver = dns::OPENDNS_RESOLVER.to_resolver();
+#[tokio::main]
+async fn main() {
     // Attempt to get an IP address and print it
-    if let Some(resolution) = task::block_on(public_ip::resolve(resolver)) {
-        if let Some(resolution) = Any::downcast_ref::<dns::DnsResolution>(&resolution) {
+    if let Some((addr, details)) =
+        public_ip::resolve_details(&[dns::OPENDNS_RESOLVER], Version::V6).await
+    {
+        if let Some(resolution) = Any::downcast_ref::<http::Details>(details.as_ref()) {
             println!(
-                "public ip address {:?} resolved from {:?} ({:?})",
-                resolution.address(),
+                "public ip address {:?} resolved from {} ({:?})",
+                addr,
+                resolution.uri(),
+                resolution.server(),
+            );
+        }
+        if let Some(resolution) = Any::downcast_ref::<dns::Details>(details.as_ref()) {
+            println!(
+                "public ip address {:?} resolved from {} ({:?})",
+                addr,
                 resolution.name(),
                 resolution.server(),
             );
