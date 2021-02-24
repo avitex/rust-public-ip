@@ -7,12 +7,14 @@ use thiserror::Error;
 
 use crate::{dns, http};
 
-/// An error produced while attempting to resolve
+/// An error produced while attempting to resolve.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
     #[error("no or invalid IP address string found")]
     Addr,
+    #[error("IP version not requested was returned")]
+    Version,
     #[error("dns resolver: {0}")]
     Dns(dns::Error),
     #[error("http resolver: {0}")]

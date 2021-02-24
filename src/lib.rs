@@ -12,20 +12,28 @@ pub mod dns;
 pub mod http;
 
 use std::any::Any;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::slice;
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
-use futures_util::ready;
-use futures_util::stream::{self, BoxStream, StreamExt};
+use futures_util::stream::{self, BoxStream, StreamExt, TryStreamExt};
+use futures_util::{future, ready};
 use pin_project_lite::pin_project;
 
 pub use crate::error::Error;
 
 pub type Details = Box<dyn Any + Send + Sync + 'static>;
 pub type Resolutions<'a> = BoxStream<'a, Result<(IpAddr, Details), Error>>;
+
+/// All builtin resolvers.
+pub const ALL: &dyn crate::Resolver = &&[
+    #[cfg(feature = "dns-resolver")]
+    dns::ALL,
+    #[cfg(feature = "http-resolver")]
+    http::ALL,
+];
 
 /// The version of IP address to resolve.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -46,30 +54,79 @@ impl Version {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-/// Attempts resolve a single address (best effort)
-pub async fn resolve_address(resolver: impl Resolver<'_>, version: Version) -> Option<IpAddr> {
-    resolve_details(resolver, version)
+/// Attempts to produce an IP address with all builtin resolvers (best effort).
+///
+/// This function will attempt to resolve until the stream is empty and will
+/// drop/ignore any resolver errors.
+pub async fn addr() -> Option<IpAddr> {
+    addr_with(ALL, Version::Any).await
+}
+
+/// Attempts to produce an IPv4 address with all builtin resolvers (best
+/// effort).
+///
+/// This function will attempt to resolve until the stream is empty and will
+/// drop/ignore any resolver errors.
+pub async fn addr_v4() -> Option<Ipv4Addr> {
+    addr_with(ALL, Version::V4).await.map(|addr| match addr {
+        IpAddr::V4(addr) => addr,
+        IpAddr::V6(_) => unreachable!(),
+    })
+}
+
+/// Attempts to produce an IPv6 address with all builtin resolvers (best
+/// effort).
+///
+/// This function will attempt to resolve until the stream is empty and will
+/// drop/ignore any resolver errors.
+pub async fn addr_v6() -> Option<Ipv6Addr> {
+    addr_with(ALL, Version::V6).await.map(|addr| match addr {
+        IpAddr::V6(addr) => addr,
+        IpAddr::V4(_) => unreachable!(),
+    })
+}
+
+/// Given a [`Resolver`] and requested [`Version`], attempts to produce an IP
+/// address (best effort).
+///
+/// This function will attempt to resolve until the stream is empty and will
+/// drop/ignore any resolver errors.
+pub async fn addr_with(resolver: impl Resolver<'_>, version: Version) -> Option<IpAddr> {
+    addr_with_details(resolver, version)
         .await
         .map(|(addr, _)| addr)
 }
 
-/// Attempts to resolve to a resolution (best effort)
-pub async fn resolve_details(
+/// Given a [`Resolver`] and requested [`Version`], attempts to produce an IP
+/// address along with the details of how it was resolved (best effort).
+///
+/// This function will attempt to resolve until the stream is empty and will
+/// drop/ignore any resolver errors.
+pub async fn addr_with_details(
     resolver: impl Resolver<'_>,
     version: Version,
 ) -> Option<(IpAddr, Details)> {
-    let mut resolution_stream = resolver.resolve(version);
-    loop {
-        match resolution_stream.next().await {
-            Some(Ok(resolution)) => return Some(resolution),
-            Some(Err(_)) => continue,
-            None => return None,
-        }
-    }
+    resolve(resolver, version)
+        .filter_map(|result| future::ready(result.ok()))
+        .next()
+        .await
 }
 
-pub fn resolve_stream<'r>(resolver: impl Resolver<'r>, version: Version) -> Resolutions<'r> {
-    resolver.resolve(version)
+/// Given a [`Resolver`] and requested [`Version`], produces a stream of [`Resolutions`].
+///
+/// This function also protects against a resolver returning a IP address with a
+/// version that was not requested.
+pub fn resolve<'r>(resolver: impl Resolver<'r>, version: Version) -> Resolutions<'r> {
+    Box::pin(resolver.resolve(version).and_then(move |(addr, details)| {
+        // If a resolver returns a version not matching the one we requested
+        // this is an error so it is skipped.
+        let result = if version.matches(addr) {
+            Ok((addr, details))
+        } else {
+            Err(Error::Version)
+        };
+        future::ready(result)
+    }))
 }
 
 ///////////////////////////////////////////////////////////////////////////////

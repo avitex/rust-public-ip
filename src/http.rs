@@ -25,6 +25,30 @@ use hyper::client::connect::{
 
 use crate::{Resolutions, Version};
 
+///////////////////////////////////////////////////////////////////////////////
+// Hardcoded resolvers
+
+/// All builtin HTTP resolvers.
+pub const ALL: &dyn crate::Resolver = &&[
+    #[cfg(feature = "ipify-org")]
+    HTTP_IPIFY_ORG,
+    #[cfg(feature = "whatismyipaddress-com")]
+    HTTP_WHATISMYIPADDRESS_COM,
+];
+
+/// `http://api.ipify.org` HTTP resolver options
+#[cfg(feature = "ipify-org")]
+pub const HTTP_IPIFY_ORG: &dyn crate::Resolver =
+    &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
+
+/// `http://bot.whatismyipaddress.com` HTTP resolver options
+#[cfg(feature = "whatismyipaddress-com")]
+pub const HTTP_WHATISMYIPADDRESS_COM: &dyn crate::Resolver =
+    &Resolver::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
+
+///////////////////////////////////////////////////////////////////////////////
+// Error
+
 /// HTTP resolver error
 #[derive(Debug, Error)]
 pub enum Error {
@@ -35,16 +59,31 @@ pub enum Error {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Details & options
 
-/// `http://api.ipify.org` HTTP resolver options
-pub const HTTP_IPIFY_ORG_RESOLVER: &dyn crate::Resolver =
-    &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
+/// A resolution produced from a HTTP resolver
+#[derive(Debug, Clone)]
+pub struct Details {
+    uri: Uri,
+    server: SocketAddr,
+    method: ExtractMethod,
+}
 
-/// `http://bot.whatismyipaddress.com` HTTP resolver options
-pub const HTTP_WHATISMYIPADDRESS_COM_RESOLVER: &dyn crate::Resolver =
-    &Resolver::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
+impl Details {
+    /// URI used in the resolution of the associated IP address
+    pub fn uri(&self) -> &Uri {
+        &self.uri
+    }
 
-///////////////////////////////////////////////////////////////////////////////
+    pub fn server(&self) -> SocketAddr {
+        self.server
+    }
+
+    /// The extract method used in the resolution of the associated IP address
+    pub fn extract_method(&self) -> ExtractMethod {
+        self.method
+    }
+}
 
 /// Method used to extract an IP address from a http response
 #[derive(Debug, Clone, Copy)]
@@ -55,9 +94,10 @@ pub enum ExtractMethod {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+// Resolver
 
 /// Options to build a HTTP resolver
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct Resolver<'r> {
     uri: Cow<'r, str>,
     method: ExtractMethod,
@@ -87,32 +127,7 @@ impl Resolver<'static> {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-/// A resolution produced from a HTTP resolver
-#[derive(Clone, Debug)]
-pub struct Details {
-    uri: Uri,
-    server: SocketAddr,
-    method: ExtractMethod,
-}
-
-impl Details {
-    /// URI used in the resolution of the associated IP address
-    pub fn uri(&self) -> &Uri {
-        &self.uri
-    }
-
-    pub fn server(&self) -> SocketAddr {
-        self.server
-    }
-
-    /// The extract method used in the resolution of the associated IP address
-    pub fn extract_method(&self) -> ExtractMethod {
-        self.method
-    }
-}
-
-///////////////////////////////////////////////////////////////////////////////
+// Resolutions
 
 pin_project! {
     #[project = HttpResolutionsProj]
@@ -210,7 +225,7 @@ fn remote_addr(response: &Response<Body>) -> SocketAddr {
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// HTTP DNS Resolver
+// Client: DNS resolver
 
 #[derive(Clone)]
 struct GaiVersionResolver(Version);
