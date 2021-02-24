@@ -15,7 +15,7 @@ keywords = ["public", "external", "ip", "async"]
 [features]
 default = ["all-providers", "tokio-dns-resolver", "tokio-http-resolver"]
 dns-resolver = ["trust-dns-proto"]
-http-resolver = ["http", "hyper"]
+http-resolver = ["http", "hyper", "hyper-system-resolver", "dns-lookup"]
 tokio-dns-resolver = ["dns-resolver", "tokio", "trust-dns-client", "trust-dns-proto/tokio-runtime"]
 tokio-http-resolver = ["http-resolver", "tokio", "hyper/runtime"]
 
@@ -28,6 +28,8 @@ whatismyipaddress-com = []
 
 [dependencies]
 thiserror = "1"
+tracing = "0.1"
+dns-lookup = { version = "1", optional = true }
 pin-project-lite = "0.2"
 futures-core = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
@@ -35,6 +37,7 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 trust-dns-client = { version = "0.20", optional = true }
 trust-dns-proto = { version = "0.20", optional = true, default-features = false }
 hyper = { version = "0.14", features = ["client", "http1"], optional = true }
+hyper-system-resolver = { version = "0.4", default-features = false, optional = true }
 http = { version = "0.2", optional = true }
 tokio = { version = "1", optional = true }
 

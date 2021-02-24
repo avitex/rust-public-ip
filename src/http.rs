@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::str;
 use std::task::{Context, Poll};
-use std::{io, str};
 
 use futures_core::Stream;
 use futures_util::future::BoxFuture;
@@ -12,16 +12,15 @@ use http::{Response, Uri};
 use hyper::{
     body::{self, Body, Buf},
     client::{Builder, Client},
-    service::Service,
 };
 use pin_project_lite::pin_project;
 use thiserror::Error;
 
 #[cfg(feature = "tokio-http-resolver")]
-use hyper::client::connect::{
-    dns::{GaiAddrs, GaiFuture, GaiResolver, Name},
-    HttpConnector, HttpInfo,
-};
+use hyper::client::connect::{HttpConnector, HttpInfo};
+
+#[cfg(feature = "tokio-http-resolver")]
+type GaiResolver = hyper_system_resolver::system::Resolver;
 
 use crate::{Resolutions, Version};
 
@@ -220,9 +219,28 @@ fn extract_json_ip_field(s: &str) -> Result<&str, crate::Error> {
 // Client
 
 #[cfg(feature = "tokio-http-resolver")]
-fn http_client(version: Version) -> Client<HttpConnector<GaiVersionResolver>, Body> {
-    let resolver = GaiVersionResolver(version);
-    let connector = HttpConnector::new_with_resolver(resolver);
+fn http_client(version: Version) -> Client<HttpConnector<GaiResolver>, Body> {
+    use dns_lookup::{AddrFamily, AddrInfoHints, SockType};
+    use hyper_system_resolver::system::System;
+    let hints = match version {
+        Version::V4 => AddrInfoHints {
+            address: AddrFamily::Inet.into(),
+            ..AddrInfoHints::default()
+        },
+        Version::V6 => AddrInfoHints {
+            address: AddrFamily::Inet6.into(),
+            ..AddrInfoHints::default()
+        },
+        Version::Any => AddrInfoHints {
+            socktype: SockType::Stream.into(),
+            ..AddrInfoHints::default()
+        },
+    };
+    let system = System {
+        addr_info_hints: Some(hints),
+        service: None,
+    };
+    let connector = HttpConnector::new_with_resolver(system.resolver());
     Builder::default().build(connector)
 }
 
@@ -233,69 +251,6 @@ fn remote_addr(response: &Response<Body>) -> SocketAddr {
         .get::<HttpInfo>()
         .unwrap()
         .remote_addr()
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// Client: DNS resolver
-
-#[derive(Clone)]
-struct GaiVersionResolver(Version);
-
-impl Service<Name> for GaiVersionResolver {
-    type Response = GaiVersionAddrs;
-
-    type Error = io::Error;
-
-    type Future = GaiVersionFuture;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Name) -> Self::Future {
-        GaiVersionFuture {
-            version: self.0,
-            inner: GaiResolver::new().call(req),
-        }
-    }
-}
-
-pin_project! {
-    struct GaiVersionFuture {
-        version: Version,
-        #[pin]
-        inner: GaiFuture,
-    }
-}
-
-impl Future for GaiVersionFuture {
-    type Output = Result<GaiVersionAddrs, io::Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let version = self.version;
-        self.project()
-            .inner
-            .poll(cx)
-            .map_ok(|answers| GaiVersionAddrs { version, answers })
-    }
-}
-
-struct GaiVersionAddrs {
-    version: Version,
-    answers: GaiAddrs,
-}
-
-impl Iterator for GaiVersionAddrs {
-    type Item = SocketAddr;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(addr) = self.answers.next() {
-            if self.version.matches(addr.ip()) {
-                return Some(addr);
-            }
-        }
-        None
-    }
 }
 
 #[cfg(test)]
