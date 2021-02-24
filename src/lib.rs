@@ -53,7 +53,9 @@ pub mod dns;
 pub mod http;
 
 use std::any::Any;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
+#[cfg(any(feature = "dns-resolver", feature = "http-resolver"))]
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::slice;
 use std::task::{Context, Poll};

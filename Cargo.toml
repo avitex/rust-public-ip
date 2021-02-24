@@ -30,7 +30,7 @@ whatismyipaddress-com = []
 thiserror = "1"
 pin-project-lite = "0.2"
 futures-core = { version = "0.3", default-features = false }
-futures-util = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 trust-dns-client = { version = "0.20", optional = true }
 trust-dns-proto = { version = "0.20", optional = true, default-features = false }
