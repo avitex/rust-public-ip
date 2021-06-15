@@ -124,8 +124,8 @@ pub type Error = ProtoError;
 /// Details produced from a DNS resolution.
 #[derive(Debug, Clone)]
 pub struct Details {
-    server: SocketAddr,
     name: Name,
+    server: SocketAddr,
     method: QueryMethod,
 }
 
@@ -151,6 +151,7 @@ impl Details {
 
 /// Method used to query an IP address from a DNS server
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum QueryMethod {
     /// The first queried `A` name record is extracted as our IP address.
     A,
@@ -320,8 +321,8 @@ fn resolve<'r>(server: IpAddr, port: u16, query: Query, method: QueryMethod) -> 
         let addr = parse_dns_response(response, method)?;
         let details = Box::new(Details {
             name,
-            method,
             server,
+            method,
         });
         Ok((addr, crate::Details::from(details)))
     };

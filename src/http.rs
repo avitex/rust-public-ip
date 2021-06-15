@@ -191,8 +191,8 @@ async fn resolve(
     let address = address_str.parse()?;
     let details = Box::new(Details {
         uri,
-        method,
         server,
+        method,
     });
     Ok((address, crate::Details::from(details)))
 }
