@@ -21,7 +21,7 @@
 )]
 #![deny(
     unused,
-    rustdoc,
+    rustdoc::all,
     missing_docs,
     rust_2018_idioms,
     clippy::all,
@@ -64,6 +64,8 @@ use futures_core::Stream;
 use futures_util::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use futures_util::{future, ready};
 use pin_project_lite::pin_project;
+use tracing::trace_span;
+use tracing_futures::Instrument;
 
 pub use crate::error::Error;
 
@@ -190,7 +192,7 @@ pub async fn addr_with_details(
 /// This function also protects against a resolver returning a IP address with a
 /// version that was not requested.
 pub fn resolve<'r>(resolver: impl Resolver<'r>, version: Version) -> Resolutions<'r> {
-    Box::pin(resolver.resolve(version).and_then(move |(addr, details)| {
+    let stream = resolver.resolve(version).and_then(move |(addr, details)| {
         // If a resolver returns a version not matching the one we requested
         // this is an error so it is skipped.
         let result = if version.matches(addr) {
@@ -199,7 +201,8 @@ pub fn resolve<'r>(resolver: impl Resolver<'r>, version: Version) -> Resolutions
             Err(Error::Version)
         };
         future::ready(result)
-    }))
+    });
+    Box::pin(stream.instrument(trace_span!("resolve public ip address")))
 }
 
 ///////////////////////////////////////////////////////////////////////////////

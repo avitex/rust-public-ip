@@ -15,6 +15,8 @@ use hyper::{
 };
 use pin_project_lite::pin_project;
 use thiserror::Error;
+use tracing::trace_span;
+use tracing_futures::Instrument;
 
 #[cfg(feature = "tokio-http-resolver")]
 use hyper::client::connect::{HttpConnector, HttpInfo};
@@ -202,9 +204,11 @@ impl<'r> crate::Resolver<'r> for Resolver<'r> {
             Ok(name) => name,
             Err(err) => return Box::pin(stream::once(future::ready(Err(crate::Error::new(err))))),
         };
-        Box::pin(HttpResolutions::HttpRequest {
+        let span = trace_span!("http resolver", ?version, ?method, %uri);
+        let resolutions = HttpResolutions::HttpRequest {
             response: Box::pin(resolve(version, uri, method)),
-        })
+        };
+        Box::pin(resolutions.instrument(span))
     }
 }
 

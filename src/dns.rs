@@ -8,6 +8,8 @@ use futures_core::Stream;
 use futures_util::ready;
 use futures_util::{future, stream};
 use pin_project_lite::pin_project;
+use tracing::trace_span;
+use tracing_futures::Instrument;
 use trust_dns_proto::{
     error::{ProtoError, ProtoErrorKind},
     op::Query,
@@ -227,16 +229,18 @@ impl<'r> crate::Resolver<'r> for Resolver<'r> {
             QueryMethod::AAAA => RecordType::AAAA,
             QueryMethod::TXT => RecordType::TXT,
         };
+        let span = trace_span!("dns resolver", ?version, ?method, %name, %port);
         let query = Query::query(name, record_type);
         let stream = resolve(first_server, port, query.clone(), method);
-        Box::pin(DnsResolutions {
+        let resolutions = DnsResolutions {
             port,
             version,
             query,
             method,
             servers,
             stream,
-        })
+        };
+        Box::pin(resolutions.instrument(span))
     }
 }
 
@@ -321,5 +325,7 @@ fn resolve<'r>(server: IpAddr, port: u16, query: Query, method: QueryMethod) -> 
         });
         Ok((addr, crate::Details::from(details)))
     };
-    Box::pin(stream::once(fut))
+    Box::pin(stream::once(
+        fut.instrument(trace_span!("query server", %server)),
+    ))
 }
