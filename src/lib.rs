@@ -13,17 +13,13 @@
 //! ```
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![forbid(
-    trivial_casts,
-    trivial_numeric_casts,
-    unstable_features,
-    future_incompatible
-)]
+#![cfg_attr(doc, deny(rustdoc::all))]
+#![forbid(trivial_casts, trivial_numeric_casts, unstable_features)]
 #![deny(
     unused,
-    rustdoc::all,
     missing_docs,
     rust_2018_idioms,
+    future_incompatible,
     clippy::all,
     clippy::correctness,
     clippy::style,
@@ -32,7 +28,7 @@
     clippy::pedantic,
     clippy::cargo
 )]
-#![allow(clippy::doc_markdown, clippy::needless_pass_by_value)]
+#![allow(clippy::needless_pass_by_value)]
 
 mod error;
 

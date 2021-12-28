@@ -213,9 +213,8 @@ impl<'r> crate::Resolver<'r> for Resolver<'r> {
 }
 
 fn extract_json_ip_field(s: &str) -> Result<&str, crate::Error> {
-    s.splitn(2, r#""ip":"#)
-        .nth(1)
-        .and_then(|after_prop| after_prop.split('"').nth(1))
+    s.split_once(r#""ip":"#)
+        .and_then(|(_, after_prop)| after_prop.split('"').nth(1))
         .ok_or(crate::Error::Addr)
 }
 
