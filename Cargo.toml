@@ -1,6 +1,6 @@
 [package]
 name = "public-ip"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["avitex <avitex@wfxlabs.com>"]
 edition = "2018"
 rust-version = "1.52.0"
