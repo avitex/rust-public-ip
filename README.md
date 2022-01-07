@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.com/avitex/rust-public-ip.svg?branch=master)](https://travis-ci.com/avitex/rust-public-ip)
+[![Build Status](https://github.com/avitex/rust-public-ip/workflows/build/badge.svg)](https://github.com/avitex/rust-public-ip/actions?query=workflow:build)
 [![Crate](https://img.shields.io/crates/v/public-ip.svg)](https://crates.io/crates/public-ip)
 [![Docs](https://docs.rs/public-ip/badge.svg)](https://docs.rs/public-ip)
 
