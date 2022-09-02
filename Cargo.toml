@@ -39,7 +39,7 @@ tokio = { version = "1", optional = true }
 
 # DNS Resolver
 trust-dns-client = { version = "0.20", optional = true }
-trust-dns-proto = { version = "0.20", optional = true, default-features = false }
+trust-dns-proto = { version = "0.22", optional = true, default-features = false }
 
 # HTTP Resolver
 http = { version = "0.2", optional = true }
