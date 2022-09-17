@@ -5,8 +5,7 @@ use std::str;
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
-use futures_util::ready;
-use futures_util::{future, stream};
+use futures_util::{future, ready, stream, StreamExt};
 use pin_project_lite::pin_project;
 use tracing::trace_span;
 use tracing_futures::Instrument;
@@ -287,7 +286,12 @@ async fn dns_query(
     let stream = UdpClientStream::<UdpSocket>::new(server);
     let (mut client, bg) = AsyncClient::connect(stream).await?;
     handle.spawn(bg);
-    client.lookup(query, query_opts).await
+    client
+        .lookup(query, query_opts)
+        .next()
+        .await
+        .transpose()?
+        .ok_or_else(|| ProtoErrorKind::Message("expected a response").into())
 }
 
 fn parse_dns_response(
@@ -299,9 +303,9 @@ fn parse_dns_response(
         None => return Err(crate::Error::Addr),
     };
     match answer.into_data() {
-        RData::A(addr) if method == QueryMethod::A => Ok(IpAddr::V4(addr)),
-        RData::AAAA(addr) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr)),
-        RData::TXT(txt) if method == QueryMethod::TXT => match txt.iter().next() {
+        Some(RData::A(addr)) if method == QueryMethod::A => Ok(IpAddr::V4(addr)),
+        Some(RData::AAAA(addr)) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr)),
+        Some(RData::TXT(txt)) if method == QueryMethod::TXT => match txt.iter().next() {
             Some(addr_bytes) => Ok(str::from_utf8(&addr_bytes[..])?.parse()?),
             None => Err(crate::Error::Addr),
         },
@@ -313,10 +317,8 @@ fn resolve<'r>(server: IpAddr, port: u16, query: Query, method: QueryMethod) -> 
     let fut = async move {
         let name = query.name().clone();
         let server = SocketAddr::new(server, port);
-        let query_opts = DnsRequestOptions {
-            use_edns: true,
-            expects_multiple_responses: false,
-        };
+        let mut query_opts = DnsRequestOptions::default();
+        query_opts.use_edns = true;
         let response = dns_query(server, query, query_opts).await?;
         let addr = parse_dns_response(response, method)?;
         let details = Box::new(Details {
