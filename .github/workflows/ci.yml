@@ -30,8 +30,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ matrix.rust-toolchain }}
       - name: Test code with default features
         run: cargo test
-      - name: Test code with all features
-        run: cargo test --all-features
       - name: Check code with only `tokio-dns-resolver` and `google` features enabled.
         run: cargo check --no-default-features --features tokio-dns-resolver,google
       - name: Check code with only `tokio-http-resolver` and `google` features enabled.
