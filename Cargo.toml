@@ -20,11 +20,18 @@ http-resolver = ["http", "hyper", "hyper-system-resolver", "dns-lookup"]
 tokio-dns-resolver = ["dns-resolver", "tokio", "trust-dns-client", "trust-dns-proto/tokio-runtime"]
 tokio-http-resolver = ["http-resolver", "tokio", "hyper/runtime"]
 
-all-providers = ["google", "opendns", "ipify-org"]
+https-openssl = ["hyper-openssl", "openssl", "tower-layer"]
+https-rustls-webpki = ["hyper-rustls/webpki-roots"]
+https-rustls-native = ["hyper-rustls/rustls-native-certs"]
 
-ipify-org = []
+all-providers = ["google", "opendns", "ipify-org", "my-ip-io", "myip-com", "seeip-org"]
+
 google = []
 opendns = []
+myip-com = []
+my-ip-io = []
+seeip-org = []
+ipify-org = []
 
 [dependencies]
 thiserror = "1"
@@ -35,6 +42,7 @@ futures-core = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 tokio = { version = "1", optional = true }
+tower-layer = { version = "0.3", optional = true }
 
 # DNS Resolver
 trust-dns-client = { version = "0.22", optional = true }
@@ -45,6 +53,9 @@ http = { version = "0.2", optional = true }
 dns-lookup = { version = "1", optional = true }
 hyper = { version = "0.14", features = ["client", "http1"], optional = true }
 hyper-system-resolver = { version = "0.5", default-features = false, optional = true }
+hyper-openssl = { version = "0.9", optional = true }
+hyper-rustls = { version = "0.23", features = ["rustls-native-certs"], optional = true }
+openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
 tokio = { version = "~1", features = ["macros"] }

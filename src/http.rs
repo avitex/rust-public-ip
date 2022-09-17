@@ -11,7 +11,7 @@ use futures_util::{future, ready, stream};
 use http::{Response, Uri};
 use hyper::{
     body::{self, Body, Buf},
-    client::{Builder, Client},
+    client::Builder,
 };
 use pin_project_lite::pin_project;
 use thiserror::Error;
@@ -24,13 +24,27 @@ use hyper::client::connect::{HttpConnector, HttpInfo};
 #[cfg(feature = "tokio-http-resolver")]
 type GaiResolver = hyper_system_resolver::system::Resolver;
 
+#[cfg(feature = "tower-layer")]
+use tower_layer::Layer;
+
 use crate::{Resolutions, Version};
 
 ///////////////////////////////////////////////////////////////////////////////
 // Hardcoded resolvers
 
-/// All builtin HTTP resolvers.
+/// All builtin HTTP/HTTPS resolvers.
 pub const ALL: &dyn crate::Resolver<'static> = &&[
+    HTTP,
+    #[cfg(any(
+        feature = "https-openssl",
+        feature = "https-rustls-native",
+        feature = "https-rustls-webpki"
+    ))]
+    HTTPS,
+];
+
+/// All builtin HTTP resolvers.
+pub const HTTP: &dyn crate::Resolver<'static> = &&[
     #[cfg(feature = "ipify-org")]
     HTTP_IPIFY_ORG,
 ];
@@ -40,6 +54,55 @@ pub const ALL: &dyn crate::Resolver<'static> = &&[
 #[cfg_attr(docsrs, doc(cfg(feature = "ipify-org")))]
 pub const HTTP_IPIFY_ORG: &dyn crate::Resolver<'static> =
     &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
+
+#[cfg(any(
+    feature = "https-openssl",
+    feature = "https-rustls-native",
+    feature = "https-rustls-webpki"
+))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(any(
+        feature = "https-openssl",
+        feature = "https-rustls-native",
+        feature = "https-rustls-webpki"
+    )))
+)]
+/// All builtin HTTP resolvers.
+pub const HTTPS: &dyn crate::Resolver<'static> = &&[
+    #[cfg(feature = "ipify-org")]
+    HTTPS_IPIFY_ORG,
+    #[cfg(feature = "myip-com")]
+    HTTPS_MYIP_COM,
+    #[cfg(feature = "my-ip-io")]
+    HTTPS_MY_IP_IO,
+    #[cfg(feature = "seeip-org")]
+    HTTPS_SEEIP_ORG,
+];
+
+/// `http://api.ipify.org` HTTP resolver options
+#[cfg(feature = "ipify-org")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ipify-org")))]
+pub const HTTPS_IPIFY_ORG: &dyn crate::Resolver<'static> =
+    &Resolver::new_static("https://api.ipify.org", ExtractMethod::PlainText);
+
+/// `https://api.myip.com` HTTPS resolver options
+#[cfg(feature = "myip-com")]
+#[cfg_attr(docsrs, doc(cfg(feature = "myip-com")))]
+pub const HTTPS_MYIP_COM: &dyn crate::Resolver<'static> =
+    &Resolver::new_static("https://api.myip.com", ExtractMethod::ExtractJsonIpField);
+
+/// `https://api.my-ip.io/ip` HTTPS resolver options
+#[cfg(feature = "my-ip-io")]
+#[cfg_attr(docsrs, doc(cfg(feature = "my-ip-io")))]
+pub const HTTPS_MY_IP_IO: &dyn crate::Resolver<'static> =
+    &Resolver::new_static("https://api.my-ip.io/ip", ExtractMethod::PlainText);
+
+/// `https://ip.seeip.org` HTTPS resolver options
+#[cfg(feature = "seeip-org")]
+#[cfg_attr(docsrs, doc(cfg(feature = "seeip-org")))]
+pub const HTTPS_SEEIP_ORG: &dyn crate::Resolver<'static> =
+    &Resolver::new_static("https://ip.seeip.org", ExtractMethod::PlainText);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Error
@@ -53,6 +116,10 @@ pub enum Error {
     /// URI parsing error.
     #[error("{0}")]
     Uri(http::uri::InvalidUri),
+    /// OpenSSL error.
+    #[cfg(feature = "openssl")]
+    #[error("{0}")]
+    Openssl(openssl::error::ErrorStack),
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -164,10 +231,7 @@ async fn resolve(
     uri: Uri,
     method: ExtractMethod,
 ) -> Result<(IpAddr, crate::Details), crate::Error> {
-    let response = http_client(version)
-        .get(uri.clone())
-        .await
-        .map_err(Error::Client)?;
+    let response = http_get(version, uri.clone()).await?;
     // TODO
     let server = remote_addr(&response);
     let mut body = body::aggregate(response.into_body())
@@ -214,7 +278,7 @@ fn extract_json_ip_field(s: &str) -> Result<&str, crate::Error> {
 // Client
 
 #[cfg(feature = "tokio-http-resolver")]
-fn http_client(version: Version) -> Client<HttpConnector<GaiResolver>, Body> {
+fn http_connector(version: Version) -> HttpConnector<GaiResolver> {
     use dns_lookup::{AddrFamily, AddrInfoHints, SockType};
     use hyper_system_resolver::system::System;
     let hints = match version {
@@ -235,8 +299,53 @@ fn http_client(version: Version) -> Client<HttpConnector<GaiResolver>, Body> {
         addr_info_hints: Some(hints),
         service: None,
     };
-    let connector = HttpConnector::new_with_resolver(system.resolver());
-    Builder::default().build(connector)
+    HttpConnector::new_with_resolver(system.resolver())
+}
+
+#[cfg(feature = "tokio-http-resolver")]
+async fn http_get(version: Version, uri: Uri) -> Result<Response<Body>, Error> {
+    let http = http_connector(version);
+
+    #[cfg(any(
+        feature = "https-openssl",
+        feature = "https-rustls-native",
+        feature = "https-rustls-webpki"
+    ))]
+    if uri.scheme() == Some(&http::uri::Scheme::HTTPS) {
+        let mut http = http;
+        http.enforce_http(false);
+
+        #[cfg(feature = "https-openssl")]
+        let connector = hyper_openssl::HttpsLayer::new()
+            .map(|l| l.layer(http))
+            .map_err(Error::Openssl)?;
+
+        #[cfg(feature = "https-rustls-native")]
+        let connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .https_only()
+            .enable_http1()
+            .wrap_connector(http);
+
+        #[cfg(feature = "https-rustls-webpki")]
+        let connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_webpki_roots()
+            .https_only()
+            .enable_http1()
+            .wrap_connector(http);
+
+        return Builder::default()
+            .build::<_, Body>(connector)
+            .get(uri)
+            .await
+            .map_err(Error::Client);
+    }
+
+    Builder::default()
+        .build::<_, Body>(http)
+        .get(uri)
+        .await
+        .map_err(Error::Client)
 }
 
 #[cfg(feature = "tokio-http-resolver")]
