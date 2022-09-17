@@ -5,7 +5,7 @@ use public_ip::{dns, http, Version};
 #[tokio::main]
 async fn main() {
     // List of resolvers to try and get an IP address from.
-    let resolver = &[http::HTTP_WHATISMYIPADDRESS_COM, dns::GOOGLE];
+    let resolver = &[http::HTTP_IPIFY_ORG, dns::GOOGLE];
     // Attempt to get an IP address and print it.
     if let Some((addr, details)) = public_ip::addr_with_details(resolver, Version::Any).await {
         // Downcast the HTTP details (if the resolution was from a HTTP resolver).

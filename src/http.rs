@@ -33,8 +33,6 @@ use crate::{Resolutions, Version};
 pub const ALL: &dyn crate::Resolver<'static> = &&[
     #[cfg(feature = "ipify-org")]
     HTTP_IPIFY_ORG,
-    #[cfg(feature = "whatismyipaddress-com")]
-    HTTP_WHATISMYIPADDRESS_COM,
 ];
 
 /// `http://api.ipify.org` HTTP resolver options
@@ -42,12 +40,6 @@ pub const ALL: &dyn crate::Resolver<'static> = &&[
 #[cfg_attr(docsrs, doc(cfg(feature = "ipify-org")))]
 pub const HTTP_IPIFY_ORG: &dyn crate::Resolver<'static> =
     &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
-
-/// `http://bot.whatismyipaddress.com` HTTP resolver options
-#[cfg(feature = "whatismyipaddress-com")]
-#[cfg_attr(docsrs, doc(cfg(feature = "whatismyipaddress-com")))]
-pub const HTTP_WHATISMYIPADDRESS_COM: &dyn crate::Resolver<'static> =
-    &Resolver::new_static("http://bot.whatismyipaddress.com", ExtractMethod::PlainText);
 
 ///////////////////////////////////////////////////////////////////////////////
 // Error

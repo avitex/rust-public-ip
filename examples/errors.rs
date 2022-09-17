@@ -4,7 +4,7 @@ use public_ip::{dns, http, Version};
 #[tokio::main]
 async fn main() {
     // List of resolvers to try and get an IP address from.
-    let resolver = &[http::HTTP_WHATISMYIPADDRESS_COM, dns::GOOGLE];
+    let resolver = &[http::HTTP_IPIFY_ORG, dns::GOOGLE];
     let addr = public_ip::resolve(resolver, Version::Any)
         // For each error in the stream we print it out to STDERR (console).
         .inspect_err(|err| eprintln!("resolver error: {}", err))

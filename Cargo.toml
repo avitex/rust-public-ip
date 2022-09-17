@@ -20,12 +20,11 @@ http-resolver = ["http", "hyper", "hyper-system-resolver", "dns-lookup"]
 tokio-dns-resolver = ["dns-resolver", "tokio", "trust-dns-client", "trust-dns-proto/tokio-runtime"]
 tokio-http-resolver = ["http-resolver", "tokio", "hyper/runtime"]
 
-all-providers = ["google", "opendns", "whatismyipaddress-com", "ipify-org"]
+all-providers = ["google", "opendns", "ipify-org"]
 
 ipify-org = []
 google = []
 opendns = []
-whatismyipaddress-com = []
 
 [dependencies]
 thiserror = "1"
