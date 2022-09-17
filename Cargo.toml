@@ -14,7 +14,7 @@ include = ["src/**/*", "examples/**/*", "README.md", "LICENSE", "Cargo.toml"]
 keywords = ["public", "external", "ip", "async"]
 
 [features]
-default = ["all-providers", "tokio-dns-resolver", "tokio-http-resolver"]
+default = ["all-providers", "tokio-dns-resolver", "tokio-http-resolver", "https-openssl"]
 dns-resolver = ["trust-dns-proto"]
 http-resolver = ["http", "hyper", "hyper-system-resolver", "dns-lookup"]
 tokio-dns-resolver = ["dns-resolver", "tokio", "trust-dns-client", "trust-dns-proto/tokio-runtime"]
