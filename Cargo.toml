@@ -24,8 +24,9 @@ https-openssl = ["hyper-openssl", "openssl", "tower-layer"]
 https-rustls-webpki = ["hyper-rustls/webpki-roots"]
 https-rustls-native = ["hyper-rustls/rustls-native-certs"]
 
-all-providers = ["google", "opendns", "ipify-org", "my-ip-io", "myip-com", "seeip-org"]
+all-providers = ["cloudflare", "google", "opendns", "ipify-org", "my-ip-io", "myip-com", "seeip-org"]
 
+cloudflare = []
 google = []
 opendns = []
 myip-com = []
