@@ -9,7 +9,7 @@ use futures_util::{StreamExt, future, ready, stream};
 use hickory_proto::{
     ProtoError, ProtoErrorKind,
     op::Query,
-    rr::{Name, RData, RecordType},
+    rr::{DNSClass, Name, RData, RecordType},
     udp::UdpClientStream,
     xfer::{DnsHandle, DnsRequestOptions, DnsResponse},
 };
@@ -57,6 +57,7 @@ pub const OPENDNS_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
     ],
     DEFAULT_DNS_PORT,
     QueryMethod::A,
+    DNSClass::IN,
 );
 
 /// OpenDNS IPv6 DNS resolver options.
@@ -72,6 +73,7 @@ pub const OPENDNS_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
     ],
     DEFAULT_DNS_PORT,
     QueryMethod::AAAA,
+    DNSClass::IN,
 );
 
 /// Combined Google DNS IPv4 and IPv6 options
@@ -92,6 +94,7 @@ pub const GOOGLE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
     ],
     DEFAULT_DNS_PORT,
     QueryMethod::TXT,
+    DNSClass::IN,
 );
 
 /// Google DNS IPv6 DNS resolver options
@@ -111,6 +114,7 @@ pub const GOOGLE_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
     ],
     DEFAULT_DNS_PORT,
     QueryMethod::TXT,
+    DNSClass::IN,
 );
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -172,11 +176,12 @@ pub struct Resolver<'r> {
     name: Cow<'r, str>,
     servers: Cow<'r, [IpAddr]>,
     method: QueryMethod,
+    class: DNSClass,
 }
 
 impl<'r> Resolver<'r> {
     /// Create a new DNS resolver.
-    pub fn new<N, S>(name: N, servers: S, port: u16, method: QueryMethod) -> Self
+    pub fn new<N, S>(name: N, servers: S, port: u16, method: QueryMethod, class: DNSClass) -> Self
     where
         N: Into<Cow<'r, str>>,
         S: Into<Cow<'r, [IpAddr]>>,
@@ -186,6 +191,7 @@ impl<'r> Resolver<'r> {
             name: name.into(),
             servers: servers.into(),
             method,
+            class,
         }
     }
 }
@@ -198,12 +204,14 @@ impl Resolver<'static> {
         servers: &'static [IpAddr],
         port: u16,
         method: QueryMethod,
+        class: DNSClass,
     ) -> Self {
         Self {
             port,
             name: Cow::Borrowed(name),
             servers: Cow::Borrowed(servers),
             method,
+            class,
         }
     }
 }
@@ -231,7 +239,8 @@ impl<'r> crate::Resolver<'r> for Resolver<'r> {
             QueryMethod::TXT => RecordType::TXT,
         };
         let span = trace_span!("dns resolver", ?version, ?method, %name, %port);
-        let query = Query::query(name, record_type);
+        let mut query = Query::query(name, record_type);
+        query.set_query_class(self.class);
         let stream = resolve(first_server, port, query.clone(), method);
         let resolutions = DnsResolutions {
             port,
