@@ -37,6 +37,8 @@ pub const ALL: &dyn crate::Resolver<'static> = &&[
     OPENDNS,
     #[cfg(feature = "google")]
     GOOGLE,
+    #[cfg(feature = "cloudflare")]
+    CLOUDFLARE,
 ];
 
 /// Combined OpenDNS IPv4 and IPv6 options.
@@ -115,6 +117,41 @@ pub const GOOGLE_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
     DEFAULT_DNS_PORT,
     QueryMethod::TXT,
     DNSClass::IN,
+);
+
+/// Combined Cloudflare DNS IPv4 and IPv6 options.
+#[cfg(feature = "cloudflare")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cloudflare")))]
+pub const CLOUDFLARE: &dyn crate::Resolver<'static> = &&[CLOUDFLARE_V4, CLOUDFLARE_V6];
+
+/// Cloudflare DNS IPv4 DNS resolver options.
+#[cfg(feature = "cloudflare")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cloudflare")))]
+pub const CLOUDFLARE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    "whoami.cloudflare",
+    &[
+        IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+        IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1)),
+    ],
+    DEFAULT_DNS_PORT,
+    QueryMethod::TXT,
+    DNSClass::CH,
+);
+
+/// Cloudflare DNS IPv6 DNS resolver options.
+#[cfg(feature = "cloudflare")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cloudflare")))]
+pub const CLOUDFLARE_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    "whoami.cloudflare",
+    &[
+        // 2606:4700:4700::1111
+        IpAddr::V6(Ipv6Addr::new(9734, 18176, 18176, 0, 0, 0, 0, 4369)),
+        // 2606:4700:4700::1001
+        IpAddr::V6(Ipv6Addr::new(9734, 18176, 18176, 0, 0, 0, 0, 4097)),
+    ],
+    DEFAULT_DNS_PORT,
+    QueryMethod::TXT,
+    DNSClass::CH,
 );
 
 ///////////////////////////////////////////////////////////////////////////////
