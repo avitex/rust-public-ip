@@ -50,7 +50,7 @@ trust-dns-proto = { version = "0.22", optional = true, default-features = false 
 
 # HTTP Resolver
 http = { version = "0.2", optional = true }
-dns-lookup = { version = "1", optional = true }
+dns-lookup = { version = "2", optional = true }
 hyper = { version = "0.14", features = ["client", "http1"], optional = true }
 hyper-system-resolver = { version = "0.5", default-features = false, optional = true }
 hyper-openssl = { version = "0.9", optional = true }
