@@ -21,7 +21,7 @@ jobs:
         run: rustc --version && rustup --version && cargo --version
       - name: Cache build artifacts
         id: cache-cargo
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
