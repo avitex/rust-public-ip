@@ -5,21 +5,25 @@ use std::pin::Pin;
 use std::str;
 use std::task::{Context, Poll};
 
+use bytes::Buf;
 use futures_core::Stream;
 use futures_util::future::BoxFuture;
 use futures_util::{future, ready, stream};
 use http::{Response, Uri};
-use hyper::{
-    body::{self, Body, Buf},
-    client::Builder,
-};
+use http_body_util::BodyExt;
 use pin_project_lite::pin_project;
 use thiserror::Error;
 use tracing::trace_span;
 use tracing_futures::Instrument;
 
 #[cfg(feature = "tokio-http-resolver")]
-use hyper::client::connect::{HttpConnector, HttpInfo};
+use hyper_util::{
+    client::legacy::{
+        Builder,
+        connect::{HttpConnector, HttpInfo},
+    },
+    rt::TokioExecutor,
+};
 
 #[cfg(feature = "tokio-http-resolver")]
 type GaiResolver = hyper_system_resolver::system::Resolver;
@@ -110,12 +114,18 @@ pub const HTTPS_SEEIP_ORG: &dyn crate::Resolver<'static> =
 /// HTTP resolver error
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Hyper error.
+    #[error("{0}")]
+    Hyper(hyper::Error),
     /// Client error.
     #[error("{0}")]
-    Client(hyper::Error),
+    Client(hyper_util::client::legacy::Error),
     /// URI parsing error.
     #[error("{0}")]
     Uri(http::uri::InvalidUri),
+    /// Failure to load certificates.
+    #[error("failed to load certs: {0}")]
+    NoCerts(std::io::Error),
     /// OpenSSL error.
     #[cfg(feature = "openssl")]
     #[error("{0}")]
@@ -211,7 +221,7 @@ pin_project! {
     }
 }
 
-impl<'r> Stream for HttpResolutions<'r> {
+impl Stream for HttpResolutions<'_> {
     type Item = Result<(IpAddr, crate::Details), crate::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -232,11 +242,13 @@ async fn resolve(
     method: ExtractMethod,
 ) -> Result<(IpAddr, crate::Details), crate::Error> {
     let response = http_get(version, uri.clone()).await?;
-    // TODO
     let server = remote_addr(&response);
-    let mut body = body::aggregate(response.into_body())
+    let mut body = response
+        .into_body()
+        .collect()
         .await
-        .map_err(Error::Client)?;
+        .map_err(Error::Hyper)?
+        .aggregate();
     let body = body.copy_to_bytes(body.remaining());
     let body_str = str::from_utf8(body.as_ref())?;
     let address_str = match method {
@@ -281,6 +293,7 @@ fn extract_json_ip_field(s: &str) -> Result<&str, crate::Error> {
 fn http_connector(version: Version) -> HttpConnector<GaiResolver> {
     use dns_lookup::{AddrFamily, AddrInfoHints, SockType};
     use hyper_system_resolver::system::System;
+
     let hints = match version {
         Version::V4 => AddrInfoHints {
             address: AddrFamily::Inet.into(),
@@ -303,7 +316,9 @@ fn http_connector(version: Version) -> HttpConnector<GaiResolver> {
 }
 
 #[cfg(feature = "tokio-http-resolver")]
-async fn http_get(version: Version, uri: Uri) -> Result<Response<Body>, Error> {
+async fn http_get(version: Version, uri: Uri) -> Result<Response<hyper::body::Incoming>, Error> {
+    type GetBody = http_body_util::Full<bytes::Bytes>;
+
     let http = http_connector(version);
 
     #[cfg(any(
@@ -316,13 +331,14 @@ async fn http_get(version: Version, uri: Uri) -> Result<Response<Body>, Error> {
         http.enforce_http(false);
 
         #[cfg(feature = "https-openssl")]
-        let connector = hyper_openssl::HttpsLayer::new()
+        let connector = hyper_openssl::client::legacy::HttpsLayer::new()
             .map(|l| l.layer(http))
             .map_err(Error::Openssl)?;
 
         #[cfg(feature = "https-rustls-native")]
         let connector = hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()
+            .map_err(Error::NoCerts)?
             .https_only()
             .enable_http1()
             .wrap_connector(http);
@@ -334,22 +350,22 @@ async fn http_get(version: Version, uri: Uri) -> Result<Response<Body>, Error> {
             .enable_http1()
             .wrap_connector(http);
 
-        return Builder::default()
-            .build::<_, Body>(connector)
+        return Builder::new(TokioExecutor::new())
+            .build::<_, GetBody>(connector)
             .get(uri)
             .await
             .map_err(Error::Client);
     }
 
-    Builder::default()
-        .build::<_, Body>(http)
+    Builder::new(TokioExecutor::new())
+        .build::<_, GetBody>(http)
         .get(uri)
         .await
         .map_err(Error::Client)
 }
 
 #[cfg(feature = "tokio-http-resolver")]
-fn remote_addr(response: &Response<Body>) -> SocketAddr {
+fn remote_addr(response: &Response<hyper::body::Incoming>) -> SocketAddr {
     response
         .extensions()
         .get::<HttpInfo>()

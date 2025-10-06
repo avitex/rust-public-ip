@@ -16,9 +16,9 @@ keywords = ["public", "external", "ip", "async"]
 [features]
 default = ["all-providers", "tokio-dns-resolver", "tokio-http-resolver", "https-openssl"]
 dns-resolver = ["hickory-proto"]
-http-resolver = ["http", "hyper", "hyper-system-resolver", "dns-lookup"]
+http-resolver = ["http", "hyper", "bytes", "http-body-util", "hyper-system-resolver", "dns-lookup"]
 tokio-dns-resolver = ["dns-resolver", "tokio", "hickory-client", "hickory-proto/tokio"]
-tokio-http-resolver = ["http-resolver", "tokio", "hyper/runtime"]
+tokio-http-resolver = ["http-resolver", "tokio", "hyper"]
 
 https-openssl = ["hyper-openssl", "openssl", "tower-layer"]
 https-rustls-webpki = ["hyper-rustls/webpki-roots"]
@@ -49,12 +49,15 @@ hickory-client = { version = "0.25", optional = true }
 hickory-proto = { version = "0.25", optional = true, default-features = false }
 
 # HTTP Resolver
-http = { version = "0.2", optional = true }
-dns-lookup = { version = "1", optional = true }
-hyper = { version = "0.14", features = ["client", "http1"], optional = true }
-hyper-system-resolver = { version = "0.5", default-features = false, optional = true }
-hyper-openssl = { version = "0.9", optional = true }
-hyper-rustls = { version = "0.23", features = ["rustls-native-certs"], optional = true }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+dns-lookup = { version = "3", optional = true }
+bytes = { version = "1", optional = true }
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-system-resolver = { version = "0.7", default-features = false, optional = true }
+hyper-openssl = { version = "0.10", features = ["client-legacy"], optional = true }
+hyper-rustls = { version = "0.27", features = ["rustls-native-certs"], optional = true }
+hyper-util = { version = "0.1", features = ["http1", "client-legacy"] }
 openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
