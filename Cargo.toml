@@ -34,7 +34,7 @@ seeip-org = []
 ipify-org = []
 
 [dependencies]
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-futures = { version = "0.2", features = ["futures-03"] }
 pin-project-lite = "0.2"
@@ -58,7 +58,7 @@ hyper-rustls = { version = "0.23", features = ["rustls-native-certs"], optional 
 openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
-tokio = { version = "~1", features = ["macros"] }
+tokio = { version = "1", features = ["macros"] }
 
 [package.metadata.docs.rs]
 all-features = true
