@@ -28,7 +28,7 @@
     clippy::pedantic,
     clippy::cargo
 )]
-#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::needless_pass_by_value, clippy::multiple_crate_versions)]
 
 mod error;
 
