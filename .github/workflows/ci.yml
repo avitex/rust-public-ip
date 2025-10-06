@@ -32,8 +32,12 @@ jobs:
         run: cargo test
       - name: Check code with only `tokio-dns-resolver` and `google` features enabled.
         run: cargo check --no-default-features --features tokio-dns-resolver,google
-      - name: Check code with only `tokio-http-resolver` and `google` features enabled.
-        run: cargo check --no-default-features --features tokio-http-resolver,google
+      - name: Check code with only `https-openssl`, `tokio-http-resolver` and `google` features enabled.
+        run: cargo check --no-default-features --features https-openssl,tokio-http-resolver,google
+      - name: Check code with only `https-rustls-native`, `tokio-http-resolver` and `google` features enabled.
+        run: cargo check --no-default-features --features https-rustls-native,tokio-http-resolver,google
+      - name: Check code with only `https-rustls-webpki`, `tokio-http-resolver` and `google` features enabled.
+        run: cargo check --no-default-features --features https-rustls-webpki,tokio-http-resolver,google
       - name: Lint code
         if: ${{ matrix.rust-toolchain == 'stable' }}
-        run: cargo fmt -- --check && cargo clippy --all-features
+        run: cargo fmt -- --check && cargo clippy
