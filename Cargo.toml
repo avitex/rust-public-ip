@@ -37,6 +37,7 @@ cloudflare = []
 [dependencies]
 thiserror = "2"
 tracing = "0.1"
+bitflags = "2"
 tracing-futures = { version = "0.2", features = ["futures-03"] }
 pin-project-lite = "0.2"
 futures-core = { version = "0.3", default-features = false }

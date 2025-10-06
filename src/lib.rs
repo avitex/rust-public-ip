@@ -58,6 +58,7 @@ pub mod dns;
 pub mod http;
 
 use std::any::Any;
+use std::iter::Sum;
 use std::net::IpAddr;
 #[cfg(any(feature = "dns-resolver", feature = "http-resolver"))]
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -65,6 +66,7 @@ use std::pin::Pin;
 use std::slice;
 use std::task::{Context, Poll};
 
+use bitflags::bitflags;
 use futures_core::Stream;
 use futures_util::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use futures_util::{future, ready};
@@ -95,6 +97,8 @@ pub const ALL: &dyn crate::Resolver<'static> = &&[
     http::ALL,
 ];
 
+////////////////////////////////////////////////////////////////////////////////
+
 /// The version of IP address to resolve.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -118,6 +122,50 @@ impl Version {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+bitflags! {
+    /// IP address version support for a resolver.
+    ///
+    /// Note that indicated support is best effort and may fail due to networking issues.
+    #[must_use]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    pub struct Support: u8 {
+         /// IPv4.
+        const V4 = 1;
+         /// IPv6.
+        const V6 = 1 << 1;
+    }
+}
+
+impl Support {
+    /// Returns the address support for the given [`Resolver`].
+    pub fn of<'r>(resolver: impl Resolver<'r>) -> Self {
+        resolver.support()
+    }
+
+    /// Returns `true` if the provided [`Version`] is supported.
+    #[must_use]
+    pub fn accepts(self, version: Version) -> bool {
+        match version {
+            Version::Any => !self.is_empty(),
+            Version::V4 => self.contains(Self::V4),
+            Version::V6 => self.contains(Self::V6),
+        }
+    }
+}
+
+impl Sum for Support {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Support::empty(), |acc, support| acc | support)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Returns the address version support of all builtin resolvers (best effort).
+pub fn support() -> Support {
+    Support::of(ALL)
+}
 
 /// Attempts to produce an IP address with all builtin resolvers (best effort).
 ///
@@ -214,11 +262,23 @@ pub fn resolve<'r>(resolver: impl Resolver<'r>, version: Version) -> Resolutions
 
 /// Trait implemented by IP address resolver.
 pub trait Resolver<'a>: Send + Sync {
+    /// Returns the IP address version [`Support`] that can be resolved.
+    fn support(&self) -> Support;
+
+    /// Returns `true` if the provided [`Version`] is supported.
+    fn supports(&self, version: Version) -> bool {
+        self.support().accepts(version)
+    }
+
     /// Resolves a stream of IP addresses with a given [`Version`].
     fn resolve(&self, version: Version) -> Resolutions<'a>;
 }
 
 impl<'r> Resolver<'r> for &'r dyn Resolver<'r> {
+    fn support(&self) -> Support {
+        (**self).support()
+    }
+
     fn resolve(&self, version: Version) -> Resolutions<'r> {
         (**self).resolve(version)
     }
@@ -228,6 +288,10 @@ impl<'r, R> Resolver<'r> for &'r [R]
 where
     R: Resolver<'r>,
 {
+    fn support(&self) -> Support {
+        self.iter().map(Resolver::support).sum()
+    }
+
     fn resolve(&self, version: Version) -> Resolutions<'r> {
         pin_project! {
             struct DynSliceResolver<'r, R> {
@@ -248,18 +312,24 @@ where
                 mut self: Pin<&mut Self>,
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
-                match ready!(self.as_mut().project().stream.poll_next(cx)) {
-                    Some(o) => Poll::Ready(Some(o)),
-                    None => self.resolvers.next().map_or(Poll::Ready(None), |next| {
-                        self.stream = next.resolve(self.version);
-                        self.project().stream.poll_next(cx)
-                    }),
+                if let Some(o) = ready!(self.as_mut().project().stream.poll_next(cx)) {
+                    Poll::Ready(Some(o))
+                } else {
+                    let version = self.version;
+
+                    self.resolvers
+                        .find(|resolver| resolver.supports(version))
+                        .map_or(Poll::Ready(None), |next| {
+                            self.stream = next.resolve(self.version);
+                            self.project().stream.poll_next(cx)
+                        })
                 }
             }
         }
 
         let mut resolvers = self.iter();
-        let first_resolver = resolvers.next();
+        let first_resolver = resolvers.find(|resolver| resolver.supports(version));
+
         Box::pin(DynSliceResolver {
             version,
             resolvers,
@@ -279,8 +349,12 @@ macro_rules! resolver_array {
     };
     ($($n:expr),*) => {
         $(
-            impl<'r> Resolver<'r> for &'r [&'r dyn Resolver<'r>; $n] {
-                fn resolve(&self, version: Version) -> Resolutions<'r> {
+            impl<'r> $crate::Resolver<'r> for &'r [&'r dyn $crate::Resolver<'r>; $n] {
+                fn support(&self) -> $crate::Support {
+                    Resolver::support(&&self[..])
+                }
+
+                fn resolve(&self, version: $crate::Version) -> $crate::Resolutions<'r> {
                     Resolver::resolve(&&self[..], version)
                 }
             }

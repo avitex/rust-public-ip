@@ -31,7 +31,7 @@ type GaiResolver = hyper_system_resolver::system::Resolver;
 #[cfg(feature = "tower-layer")]
 use tower_layer::Layer;
 
-use crate::{Resolutions, Version};
+use crate::{Resolutions, Support, Version};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Hardcoded resolvers
@@ -56,8 +56,11 @@ pub const HTTP: &dyn crate::Resolver<'static> = &&[
 /// `http://api.ipify.org` HTTP resolver options
 #[cfg(feature = "ipify-org")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ipify-org")))]
-pub const HTTP_IPIFY_ORG: &dyn crate::Resolver<'static> =
-    &Resolver::new_static("http://api.ipify.org", ExtractMethod::PlainText);
+pub const HTTP_IPIFY_ORG: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::all(),
+    "http://api.ipify.org",
+    ExtractMethod::PlainText,
+);
 
 #[cfg(any(
     feature = "https-openssl",
@@ -87,26 +90,38 @@ pub const HTTPS: &dyn crate::Resolver<'static> = &&[
 /// `http://api.ipify.org` HTTP resolver options
 #[cfg(feature = "ipify-org")]
 #[cfg_attr(docsrs, doc(cfg(feature = "ipify-org")))]
-pub const HTTPS_IPIFY_ORG: &dyn crate::Resolver<'static> =
-    &Resolver::new_static("https://api.ipify.org", ExtractMethod::PlainText);
+pub const HTTPS_IPIFY_ORG: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::all(),
+    "https://api.ipify.org",
+    ExtractMethod::PlainText,
+);
 
 /// `https://api.myip.com` HTTPS resolver options
 #[cfg(feature = "myip-com")]
 #[cfg_attr(docsrs, doc(cfg(feature = "myip-com")))]
-pub const HTTPS_MYIP_COM: &dyn crate::Resolver<'static> =
-    &Resolver::new_static("https://api.myip.com", ExtractMethod::ExtractJsonIpField);
+pub const HTTPS_MYIP_COM: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::all(),
+    "https://api.myip.com",
+    ExtractMethod::ExtractJsonIpField,
+);
 
 /// `https://api.my-ip.io/ip` HTTPS resolver options
 #[cfg(feature = "my-ip-io")]
 #[cfg_attr(docsrs, doc(cfg(feature = "my-ip-io")))]
-pub const HTTPS_MY_IP_IO: &dyn crate::Resolver<'static> =
-    &Resolver::new_static("https://api.my-ip.io/ip", ExtractMethod::PlainText);
+pub const HTTPS_MY_IP_IO: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::all(),
+    "https://api.my-ip.io/ip",
+    ExtractMethod::PlainText,
+);
 
 /// `https://ip.seeip.org` HTTPS resolver options
 #[cfg(feature = "seeip-org")]
 #[cfg_attr(docsrs, doc(cfg(feature = "seeip-org")))]
-pub const HTTPS_SEEIP_ORG: &dyn crate::Resolver<'static> =
-    &Resolver::new_static("https://ip.seeip.org", ExtractMethod::PlainText);
+pub const HTTPS_SEEIP_ORG: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::all(),
+    "https://ip.seeip.org",
+    ExtractMethod::PlainText,
+);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Error
@@ -179,17 +194,19 @@ pub enum ExtractMethod {
 /// Options to build a HTTP resolver
 #[derive(Debug, Clone)]
 pub struct Resolver<'r> {
+    support: Support,
     uri: Cow<'r, str>,
     method: ExtractMethod,
 }
 
 impl<'r> Resolver<'r> {
     /// Create new HTTP resolver options
-    pub fn new<U>(uri: U, method: ExtractMethod) -> Self
+    pub fn new<U>(support: Support, uri: U, method: ExtractMethod) -> Self
     where
         U: Into<Cow<'r, str>>,
     {
         Self {
+            support,
             uri: uri.into(),
             method,
         }
@@ -199,9 +216,11 @@ impl<'r> Resolver<'r> {
 impl Resolver<'static> {
     /// Create new HTTP resolver options from static
     #[must_use]
-    pub const fn new_static(uri: &'static str, method: ExtractMethod) -> Self {
+    pub const fn new_static(support: Support, uri: &'static str, method: ExtractMethod) -> Self {
         Self {
+            support,
             uri: Cow::Borrowed(uri),
+
             method,
         }
     }
@@ -266,7 +285,15 @@ async fn resolve(
 }
 
 impl<'r> crate::Resolver<'r> for Resolver<'r> {
+    fn support(&self) -> crate::Support {
+        self.support
+    }
+
     fn resolve(&self, version: Version) -> Resolutions<'r> {
+        if !self.support.accepts(version) {
+            return Box::pin(stream::empty());
+        }
+
         let method = self.method;
         let uri: Uri = match self.uri.as_ref().parse() {
             Ok(name) => name,

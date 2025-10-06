@@ -24,7 +24,7 @@ use hickory_proto::runtime::TokioRuntimeProvider;
 #[cfg(feature = "tokio-dns-resolver")]
 use tokio::runtime::Handle;
 
-use crate::{Resolutions, Version};
+use crate::{Resolutions, Support, Version};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Hardcoded resolvers
@@ -50,6 +50,7 @@ pub const OPENDNS: &dyn crate::Resolver<'static> = &&[OPENDNS_V4, OPENDNS_V6];
 #[cfg(feature = "opendns")]
 #[cfg_attr(docsrs, doc(cfg(feature = "opendns")))]
 pub const OPENDNS_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::V4,
     "myip.opendns.com",
     &[
         IpAddr::V4(Ipv4Addr::new(208, 67, 222, 222)),
@@ -66,6 +67,7 @@ pub const OPENDNS_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
 #[cfg(feature = "opendns")]
 #[cfg_attr(docsrs, doc(cfg(feature = "opendns")))]
 pub const OPENDNS_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::V6,
     "myip.opendns.com",
     &[
         // 2620:0:ccc::2
@@ -87,6 +89,7 @@ pub const GOOGLE: &dyn crate::Resolver<'static> = &&[GOOGLE_V4, GOOGLE_V6];
 #[cfg(feature = "google")]
 #[cfg_attr(docsrs, doc(cfg(feature = "google")))]
 pub const GOOGLE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::V4,
     "o-o.myaddr.l.google.com",
     &[
         IpAddr::V4(Ipv4Addr::new(216, 239, 32, 10)),
@@ -103,6 +106,7 @@ pub const GOOGLE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
 #[cfg(feature = "google")]
 #[cfg_attr(docsrs, doc(cfg(feature = "google")))]
 pub const GOOGLE_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::V6,
     "o-o.myaddr.l.google.com",
     &[
         // 2001:4860:4802:32::a
@@ -128,6 +132,7 @@ pub const CLOUDFLARE: &dyn crate::Resolver<'static> = &&[CLOUDFLARE_V4, CLOUDFLA
 #[cfg(feature = "cloudflare")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cloudflare")))]
 pub const CLOUDFLARE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::V4,
     "whoami.cloudflare",
     &[
         IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
@@ -142,6 +147,7 @@ pub const CLOUDFLARE_V4: &dyn crate::Resolver<'static> = &Resolver::new_static(
 #[cfg(feature = "cloudflare")]
 #[cfg_attr(docsrs, doc(cfg(feature = "cloudflare")))]
 pub const CLOUDFLARE_V6: &dyn crate::Resolver<'static> = &Resolver::new_static(
+    Support::V6,
     "whoami.cloudflare",
     &[
         // 2606:4700:4700::1111
@@ -209,6 +215,7 @@ pub enum QueryMethod {
 /// Options to build a DNS resolver.
 #[derive(Debug)]
 pub struct Resolver<'r> {
+    support: Support,
     port: u16,
     name: Cow<'r, str>,
     servers: Cow<'r, [IpAddr]>,
@@ -218,12 +225,20 @@ pub struct Resolver<'r> {
 
 impl<'r> Resolver<'r> {
     /// Create a new DNS resolver.
-    pub fn new<N, S>(name: N, servers: S, port: u16, method: QueryMethod, class: DNSClass) -> Self
+    pub fn new<N, S>(
+        support: Support,
+        name: N,
+        servers: S,
+        port: u16,
+        method: QueryMethod,
+        class: DNSClass,
+    ) -> Self
     where
         N: Into<Cow<'r, str>>,
         S: Into<Cow<'r, [IpAddr]>>,
     {
         Self {
+            support,
             port,
             name: name.into(),
             servers: servers.into(),
@@ -237,6 +252,7 @@ impl Resolver<'static> {
     /// Create a new DNS resolver from static options.
     #[must_use]
     pub const fn new_static(
+        support: Support,
         name: &'static str,
         servers: &'static [IpAddr],
         port: u16,
@@ -244,6 +260,7 @@ impl Resolver<'static> {
         class: DNSClass,
     ) -> Self {
         Self {
+            support,
             port,
             name: Cow::Borrowed(name),
             servers: Cow::Borrowed(servers),
@@ -254,7 +271,15 @@ impl Resolver<'static> {
 }
 
 impl<'r> crate::Resolver<'r> for Resolver<'r> {
+    fn support(&self) -> Support {
+        self.support
+    }
+
     fn resolve(&self, version: Version) -> Resolutions<'r> {
+        if !self.support.accepts(version) {
+            return Box::pin(stream::empty());
+        }
+
         let port = self.port;
         let method = self.method;
         let name = match Name::from_ascii(self.name.as_ref()) {
