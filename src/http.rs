@@ -331,9 +331,21 @@ async fn http_get(version: Version, uri: Uri) -> Result<Response<hyper::body::In
         http.enforce_http(false);
 
         #[cfg(feature = "https-openssl")]
-        let connector = hyper_openssl::client::legacy::HttpsLayer::new()
-            .map(|l| l.layer(http))
-            .map_err(Error::Openssl)?;
+        let connector = {
+            let mut ssl = openssl::ssl::SslConnector::builder(openssl::ssl::SslMethod::tls())
+                .map_err(Error::Openssl)?;
+
+            // Configure ALPN to support only HTTP/1.1.
+            //
+            // By default `hyper_openssl` specifies support for H2, which
+            // results in a panic as we do not enable H2 client features.
+            ssl.set_alpn_protos(b"\x08http/1.1")
+                .map_err(Error::Openssl)?;
+
+            hyper_openssl::client::legacy::HttpsLayer::with_connector(ssl)
+                .map(|l| l.layer(http))
+                .map_err(Error::Openssl)?
+        };
 
         #[cfg(feature = "https-rustls-native")]
         let connector = hyper_rustls::HttpsConnectorBuilder::new()
