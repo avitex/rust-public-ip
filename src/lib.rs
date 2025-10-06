@@ -36,7 +36,9 @@ mod error;
     all(feature = "dns-resolver", not(feature = "tokio-dns-resolver")),
     all(feature = "http-resolver", not(feature = "tokio-http-resolver"))
 ))]
-compile_error!("tokio is not enabled and is the only supported runtime currently - consider creating a PR or issue");
+compile_error!(
+    "tokio is not enabled and is the only supported runtime currently - consider creating a PR or issue"
+);
 
 #[cfg(any(
     all(feature = "https-openssl", feature = "https-rustls-native"),

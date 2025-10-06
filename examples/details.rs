@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use public_ip::{dns, http, Version};
+use public_ip::{Version, dns, http};
 
 #[tokio::main]
 async fn main() {
