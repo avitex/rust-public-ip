@@ -2,8 +2,8 @@
 name = "public-ip"
 version = "0.2.2"
 authors = ["avitex <avitex@wfxlabs.com>"]
-edition = "2018"
-rust-version = "1.52.0"
+edition = "2024"
+rust-version = "1.85.0"
 description = "Find the public IP address of a device"
 documentation = "https://docs.rs/public-ip"
 homepage = "https://github.com/avitex/rust-public-ip"
