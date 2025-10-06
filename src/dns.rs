@@ -5,22 +5,24 @@ use std::str;
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
-use futures_util::{future, ready, stream, StreamExt};
-use pin_project_lite::pin_project;
-use tracing::trace_span;
-use tracing_futures::Instrument;
-use trust_dns_proto::{
-    error::{ProtoError, ProtoErrorKind},
+use futures_util::{StreamExt, future, ready, stream};
+use hickory_proto::{
+    ProtoError, ProtoErrorKind,
     op::Query,
     rr::{Name, RData, RecordType},
     udp::UdpClientStream,
     xfer::{DnsHandle, DnsRequestOptions, DnsResponse},
 };
+use pin_project_lite::pin_project;
+use tracing::trace_span;
+use tracing_futures::Instrument;
 
 #[cfg(feature = "tokio-dns-resolver")]
-use tokio::{net::UdpSocket, runtime::Handle};
+use hickory_client::client::Client;
 #[cfg(feature = "tokio-dns-resolver")]
-use trust_dns_client::client::AsyncClient;
+use hickory_proto::runtime::TokioRuntimeProvider;
+#[cfg(feature = "tokio-dns-resolver")]
+use tokio::runtime::Handle;
 
 use crate::{Resolutions, Version};
 
@@ -220,9 +222,8 @@ impl<'r> crate::Resolver<'r> for Resolver<'r> {
             .copied()
             .filter(|addr| version.matches(*addr))
             .collect();
-        let first_server = match servers.pop() {
-            Some(server) => server,
-            None => return Box::pin(stream::empty()),
+        let Some(first_server) = servers.pop() else {
+            return Box::pin(stream::empty());
         };
         let record_type = match self.method {
             QueryMethod::A => RecordType::A,
@@ -259,7 +260,7 @@ pin_project! {
     }
 }
 
-impl<'r> Stream for DnsResolutions<'r> {
+impl Stream for DnsResolutions<'_> {
     type Item = Result<(IpAddr, crate::Details), crate::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -283,8 +284,8 @@ async fn dns_query(
     query_opts: DnsRequestOptions,
 ) -> Result<DnsResponse, ProtoError> {
     let handle = Handle::current();
-    let stream = UdpClientStream::<UdpSocket>::new(server);
-    let (mut client, bg) = AsyncClient::connect(stream).await?;
+    let stream = UdpClientStream::builder(server, TokioRuntimeProvider::new()).build();
+    let (client, bg) = Client::connect(stream).await?;
     handle.spawn(bg);
     client
         .lookup(query, query_opts)
@@ -298,14 +299,13 @@ fn parse_dns_response(
     mut response: DnsResponse,
     method: QueryMethod,
 ) -> Result<IpAddr, crate::Error> {
-    let answer = match response.take_answers().into_iter().next() {
-        Some(answer) => answer,
-        None => return Err(crate::Error::Addr),
+    let Some(answer) = response.take_answers().into_iter().next() else {
+        return Err(crate::Error::Addr);
     };
     match answer.into_data() {
-        Some(RData::A(addr)) if method == QueryMethod::A => Ok(IpAddr::V4(addr)),
-        Some(RData::AAAA(addr)) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr)),
-        Some(RData::TXT(txt)) if method == QueryMethod::TXT => match txt.iter().next() {
+        RData::A(addr) if method == QueryMethod::A => Ok(IpAddr::V4(addr.0)),
+        RData::AAAA(addr) if method == QueryMethod::AAAA => Ok(IpAddr::V6(addr.0)),
+        RData::TXT(txt) if method == QueryMethod::TXT => match txt.iter().next() {
             Some(addr_bytes) => Ok(str::from_utf8(&addr_bytes[..])?.parse()?),
             None => Err(crate::Error::Addr),
         },

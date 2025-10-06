@@ -15,9 +15,9 @@ keywords = ["public", "external", "ip", "async"]
 
 [features]
 default = ["all-providers", "tokio-dns-resolver", "tokio-http-resolver", "https-openssl"]
-dns-resolver = ["trust-dns-proto"]
+dns-resolver = ["hickory-proto"]
 http-resolver = ["http", "hyper", "hyper-system-resolver", "dns-lookup"]
-tokio-dns-resolver = ["dns-resolver", "tokio", "trust-dns-client", "trust-dns-proto/tokio-runtime"]
+tokio-dns-resolver = ["dns-resolver", "tokio", "hickory-client", "hickory-proto/tokio"]
 tokio-http-resolver = ["http-resolver", "tokio", "hyper/runtime"]
 
 https-openssl = ["hyper-openssl", "openssl", "tower-layer"]
@@ -45,8 +45,8 @@ tokio = { version = "1", optional = true }
 tower-layer = { version = "0.3", optional = true }
 
 # DNS Resolver
-trust-dns-client = { version = "0.22", optional = true }
-trust-dns-proto = { version = "0.22", optional = true, default-features = false }
+hickory-client = { version = "0.25", optional = true }
+hickory-proto = { version = "0.25", optional = true, default-features = false }
 
 # HTTP Resolver
 http = { version = "0.2", optional = true }
