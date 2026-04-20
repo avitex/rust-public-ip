@@ -47,7 +47,7 @@ tower-layer = { version = "0.3", optional = true }
 
 # DNS Resolver
 hickory-client = { version = "0.25", optional = true }
-hickory-proto = { version = "0.25", optional = true, default-features = false }
+hickory-proto = { version = "0.26", optional = true, default-features = false }
 
 # HTTP Resolver
 http = { version = "1", optional = true }
